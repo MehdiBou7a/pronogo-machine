@@ -39,6 +39,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Installer Pillow (génération des images grille/programme)
+        run: pip install --quiet Pillow
+
       - name: Snapshot matches (scénario admin read-only)
         env:
           ADMIN_SYNC_TOKEN: ${{ secrets.ADMIN_SYNC_TOKEN }}
