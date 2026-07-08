@@ -1,0 +1,60 @@
+name: "🩺 Témoin contenu (alerte si rien produit)"
+# FILET ANTI-PANNE SILENCIEUSE (2026-07-08). Le contenu est généré par des
+# routines Claude (pronogo.dev) que GitHub ne voit PAS. Si elles s'arrêtent
+# (budget de jetons épuisé, cron mort, erreur), la panne serait INVISIBLE.
+# Ce témoin (0 jeton, gratuit) vérifie chaque jour qu'un contenu du jour a bien
+# été committé dans fc-pronox ; sinon → mail d'alerte. Transforme toute panne
+# (quelle qu'en soit la cause) en alerte DÉTECTÉE.
+
+on:
+  schedule:
+    - cron: "40 10 * * *"   # 12h40 Paris (été) — après le run du matin (~11h + marge)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  witness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 1
+
+      - name: Chercher un contenu daté d'aujourd'hui
+        id: check
+        run: |
+          DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          # Cherche un post/carte du jour dans les 2 emplacements possibles
+          # (JOUR/ canonique OU reports/routines/posts pendant la transition).
+          FOUND=""
+          [ -d "marketing/JOUR/$DATE" ] && \
+            FOUND=$(ls "marketing/JOUR/$DATE/" 2>/dev/null | grep -E "${DATE}_(x|instagram|facebook|tiktok)_" | head -1 || true)
+          if [ -z "$FOUND" ]; then
+            FOUND=$(ls marketing/reports/routines/posts/ 2>/dev/null | grep -E "^${DATE}_(x|instagram|facebook|tiktok)_" | head -1 || true)
+          fi
+          if [ -n "$FOUND" ]; then
+            echo "✅ Contenu du jour présent ($FOUND) → routine OK."
+            echo "alert=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ AUCUN post daté $DATE → la génération n'a probablement pas tourné."
+            echo "alert=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Alerte email si aucun contenu (observateur qui alerte)
+        if: steps.check.outputs.alert == '1'
+        env:
+          BREVO_SMTP_KEY: ${{ secrets.BREVO_SMTP_KEY }}
+          BREVO_SMTP_USER: ${{ secrets.BREVO_SMTP_USER }}
+          ALERT_TO: ${{ secrets.ALERT_EMAIL }}
+        run: |
+          SUBJECT="⚠️ PronoGo — AUCUN contenu généré aujourd'hui (${{ steps.check.outputs.date }})"
+          BODY="Le témoin n'a trouvé AUCUN post daté d'aujourd'hui dans fc-pronox. La routine de génération (Le Post du Jour, sur pronogo.dev) n'a probablement pas tourné. Causes probables : budget de jetons Claude épuisé, routine en pause/morte, ou erreur. Action : ouvre claude.ai/code/routines (compte pronogo.dev) et vérifie le dernier run + le budget. Run témoin : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          python _PILOTAGE/tools/ci_alert_email.py "$SUBJECT" "$BODY"

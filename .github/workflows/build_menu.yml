@@ -5,8 +5,13 @@ name: "📋 Menu de validation du jour (cloud gratuit)"
 # (le repo public ne peut pas observer les push du repo privé fc-pronox).
 
 on:
+  # PRIMAIRE : déclenché par la routine « Le Post du Jour » (Solution C) via
+  # `gh workflow run` dès qu'elle a fini → le menu se construit pile quand le
+  # contenu est prêt. Les crons ci-dessous sont un FILET DE SECOURS (idempotent)
+  # au cas où le déclenchement par la routine échoue (ou soir calme sans post).
   schedule:
-    - cron: "0 9 * * *"   # ~11h Paris (été), après « Le Post du Jour » (7h) et le prono (10h45)
+    - cron: "30 9 * * *"    # 11h30 Paris — secours matin (après grille 11h + post)
+    - cron: "30 21 * * *"   # 23h30 Paris — secours soir (après grille-bilan 23h)
   workflow_dispatch:
     inputs:
       dry_run:
