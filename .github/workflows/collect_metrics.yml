@@ -1,0 +1,71 @@
+name: "📊 Métriques réseaux sociaux (cloud gratuit)"
+# Relevé quotidien (lecture seule) des followers/reach IG/FB/X/YouTube.
+# history.jsonl est APPEND-ONLY + dédupliqué (date, network) DANS le script →
+# 2e passe = 0 ligne. Commit uniquement si de nouvelles lignes.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 08h Paris (été)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collect-metrics
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Relever les métriques
+        env:
+          META_LONG_LIVED_TOKEN: ${{ secrets.META_LONG_LIVED_TOKEN }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
+        run: |
+          set +e
+          python -X utf8 marketing/tools/collect_metrics.py
+          echo "METRICS_RC=$?" >> "$GITHUB_ENV"
+          set -e
+
+      - name: Committer l'historique (SI nouvelles lignes)
+        run: |
+          git config user.name "PronoGo Cloud Metrics"
+          git config user.email "pronogo.dev@gmail.com"
+          git add marketing/reports/metrics/history.jsonl 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "history.jsonl inchangé → relevé déjà fait (idempotent)."; exit 0
+          fi
+          git add marketing/reports/metrics/DASHBOARD.html 2>/dev/null || true
+          git commit -m "metrics(cloud) relevé réseaux $(date -u +%Y-%m-%d) [skip ci]"
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
+            git pull --rebase origin main; sleep $((i * 3))
+          done
+          echo "Push échoué après 5 essais — le prochain run rattrapera (append-only)."
+
+      - name: Rejouer l'échec réseau éventuel (observateur qui alerte)
+        if: env.METRICS_RC != '0'
+        run: |
+          echo "⚠️ Au moins un réseau CONFIGURÉ a échoué (voir logs, ex. token expiré)."
+          exit 1

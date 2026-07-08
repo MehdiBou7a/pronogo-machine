@@ -1,0 +1,75 @@
+name: "🔑 Refresh token Meta (mensuel)"
+# Ré-échange le token long-lived Meta (~60j) et met à jour le secret
+# META_LONG_LIVED_TOKEN de CE dépôt (via GH_PAT secrets:write). Le script cible
+# GITHUB_REPOSITORY (= pronogo-machine) automatiquement. Alerte email si échec.
+
+on:
+  schedule:
+    - cron: "0 3 1 * *"   # 1er du mois, 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Test seulement (--dry) : échange le token mais N'ÉCRIT PAS le secret"
+        type: boolean
+        default: false
+      simulate_failure:
+        description: "🔥 EXERCICE : force un échec pour vérifier l'alerte email"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-meta-token
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Rafraîchir le token + mettre à jour le secret
+        env:
+          META_LONG_LIVED_TOKEN: ${{ secrets.META_LONG_LIVED_TOKEN }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}   # PAT secrets:write sur pronogo-machine
+        run: |
+          if [ "${{ github.event.inputs.simulate_failure }}" = "true" ]; then
+            echo "🔥 EXERCICE : échec FORCÉ (aucun token ni secret touché)."; exit 1
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python _PILOTAGE/tools/refresh_meta_token_cloud.py --dry
+          else
+            python _PILOTAGE/tools/refresh_meta_token_cloud.py --set-secret
+          fi
+
+      - name: Alerte email si échec (observateur qui alerte)
+        if: failure()
+        env:
+          BREVO_SMTP_KEY: ${{ secrets.BREVO_SMTP_KEY }}
+          BREVO_SMTP_USER: ${{ secrets.BREVO_SMTP_USER }}
+          ALERT_TO: ${{ secrets.ALERT_EMAIL }}
+          IS_DRILL: ${{ github.event.inputs.simulate_failure }}
+        run: |
+          SUBJECT="⚠️ PronoGo — ÉCHEC refresh token Meta (publi cloud en danger)"
+          BODY="Le refresh mensuel du token long-lived Meta a échoué. Risque : à l'expiration (~60j) la publication IG/FB casse en silence. Action : relancer refresh_meta_token en dry_run pour voir l'erreur, ou régénérer un token à la main (Graph API Explorer). Run : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "$IS_DRILL" = "true" ]; then
+            SUBJECT="[🔥 EXERCICE — TEST] $SUBJECT"
+            BODY="✅ EXERCICE volontaire : le refresh n'a PAS vraiment échoué, on vérifie juste que l'alerte arrive. --- $BODY"
+          fi
+          python _PILOTAGE/tools/ci_alert_email.py "$SUBJECT" "$BODY"
