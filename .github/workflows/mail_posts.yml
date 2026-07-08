@@ -33,7 +33,7 @@ jobs:
           ref: main
           fetch-depth: 1
 
-      - name: Sélectionner les posts du jour (+ anti-doublon)
+      - name: Compter les posts du jour (+ anti-doublon)
         id: news
         run: |
           DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
@@ -47,43 +47,21 @@ jobs:
             echo "should_send=0" >> "$GITHUB_OUTPUT"; exit 0
           fi
 
-          # Posts du jour uniquement (fichiers <date>_*.html, hors fichiers d'état .*).
-          IGFB=""; XT=""
+          # Mail = UN seul lien vers la page unifiée (IG/FB + X/TikTok + vidéo + grille).
+          # Plus de pièces jointes : la page montre tout. On compte juste pour le sujet.
+          COUNT=0
           for p in "$DIR/${DATE}"_*.html; do
             [ -f "$p" ] || continue
-            b=$(basename "$p")
-            case "$b" in
-              *_instagram_*|*_facebook_*) IGFB="$IGFB $b" ;;
-              *_x_*|*_tiktok_*) XT="$XT $p"; tw="${p%.html}.png"; [ -f "$tw" ] && XT="$XT $tw" ;;
-            esac
+            case "$(basename "$p")" in .*) continue ;; esac
+            COUNT=$((COUNT + 1))
           done
 
-          CAPPED=""; TOTAL=0
-          for p in $(echo "$XT" | tr ' ' '\n' | sort -u); do
-            [ -z "$p" ] && continue
-            S=$(stat -c%s "$p" 2>/dev/null || echo 0)
-            if [ $((TOTAL + S)) -le 15728640 ]; then CAPPED="$CAPPED $p"; TOTAL=$((TOTAL + S)); else echo "SKIP (plafond 15Mo): $p"; fi
-          done
-
-          IGFB_COUNT=$(echo $IGFB | wc -w)
-          XT_FILES=$(echo $CAPPED | xargs | tr ' ' ',')
-          XT_COUNT=$(echo $CAPPED | tr ' ' '\n' | grep -c '\.html$' || true)
-          TOTAL_COUNT=$((IGFB_COUNT + XT_COUNT))
-
-          if [ "$TOTAL_COUNT" = "0" ]; then
+          if [ "$COUNT" = "0" ]; then
             echo "Aucun post daté du $DATE → rien à envoyer."
             echo "should_send=0" >> "$GITHUB_OUTPUT"; exit 0
           fi
-
-          echo "should_send=1"          >> "$GITHUB_OUTPUT"
-          echo "total_count=$TOTAL_COUNT" >> "$GITHUB_OUTPUT"
-          echo "igfb_count=$IGFB_COUNT"  >> "$GITHUB_OUTPUT"
-          echo "xt_count=$XT_COUNT"      >> "$GITHUB_OUTPUT"
-          echo "xt_files=$XT_FILES"      >> "$GITHUB_OUTPUT"
-          IGFB_LIST=$(for f in $IGFB; do echo "• $f"; done)
-          XT_LIST=$(for f in $(echo $CAPPED | tr ' ' '\n' | grep '\.html$'); do basename "$f" | sed 's/^/• /'; done)
-          { echo "igfb_list<<EOF"; echo "$IGFB_LIST"; echo "EOF"; } >> "$GITHUB_OUTPUT"
-          { echo "xt_list<<EOF";   echo "$XT_LIST";   echo "EOF"; } >> "$GITHUB_OUTPUT"
+          echo "should_send=1"     >> "$GITHUB_OUTPUT"
+          echo "total_count=$COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Envoyer l'email léger (Brevo SMTP)
         if: steps.news.outputs.should_send == '1'
@@ -97,28 +75,19 @@ jobs:
           to: ${{ secrets.ALERT_EMAIL }}
           reply_to: pronogo.dev@gmail.com
           from: "PronoGo Machine <pronogo.dev@gmail.com>"
-          attachments: ${{ steps.news.outputs.xt_files }}
           body: |
             Salut Mehdi,
 
-            La machine a préparé des posts. Deux gestes :
+            La machine a préparé ${{ steps.news.outputs.total_count }} post(s) du jour.
 
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            1) INSTAGRAM / FACEBOOK (${{ steps.news.outputs.igfb_count }}) — validation en 1 page
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            📋 Ta sélection du jour 👉 https://pronogo-valider.web.app/?token=${{ secrets.APPROVAL_LINK_TOKEN }}
+            👉 TOUT est sur UNE page (Instagram/Facebook + X/TikTok + vidéo + grille) :
+            https://pronogo-valider.web.app/?token=${{ secrets.APPROVAL_LINK_TOKEN }}
 
-            Coche ✅ Publier / ⏸ Plus tard / ❌ Non, règle l'heure, tape ton PIN, Envoie.
-            (Ton PIN reste dans ta tête — il n'est JAMAIS dans ce mail.)
+            • Instagram / Facebook : coche ✅ Publier / ⏸ Plus tard / ❌ Non + l'heure → la machine publie.
+            • X / TikTok / vidéo : copie la légende (bouton sur la page) et publie à la main.
+            • Écris un retour sous un post → la machine apprend de toi.
 
-            ${{ steps.news.outputs.igfb_list }}
-
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            2) X / TIKTOK (${{ steps.news.outputs.xt_count }}) — à publier à la main
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            En pièces jointes : la carte (.html, légende à copier) + le visuel (.png).
-
-            ${{ steps.news.outputs.xt_list }}
+            Ton PIN reste dans ta tête — il n'est JAMAIS dans ce mail.
 
             — La machine PronoGo 🦅
 
