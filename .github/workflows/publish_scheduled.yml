@@ -1,0 +1,92 @@
+name: "☁️ Publication IG/FB automatique (cloud gratuit)"
+# Publie sur IG/FB les posts APPROUVÉS+dus (décisions lues via la CF submitApproval).
+# Gardes-fous conservés : PAUSE_AUTOPUBLISH (fichier dans fc-pronox = stop),
+# porte d'approbation (silence = hold), anti-redondance, .published.json anti-doublon.
+#
+# ⚠️ DÉSARMÉ VOLONTAIREMENT : déclenchement MANUEL uniquement (workflow_dispatch)
+#    tant que la machine n'est pas validée. POUR ARMER (publication auto toutes
+#    les 30 min), décommenter le bloc `schedule` ci-dessous (via une PR gardée).
+on:
+  # schedule:
+  #   - cron: "*/30 5-21 * * *"   # 07h-23h Paris (été) — DÉCOMMENTER POUR ARMER
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Aperçu seulement (--dry), rien ne part"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-scheduled
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 1
+
+      - name: Filet — arrêt immédiat si PAUSE_AUTOPUBLISH présent
+        run: |
+          if [ -f "_PILOTAGE/PAUSE_AUTOPUBLISH" ]; then
+            echo "PAUSE_AUTOPUBLISH présent → le job s'arrête ici."
+            echo "SKIP_ALL=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Setup Python
+        if: env.SKIP_ALL != '1'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node (pour firebase-tools)
+        if: env.SKIP_ALL != '1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Installer firebase-tools
+        if: env.SKIP_ALL != '1'
+        run: npm install -g firebase-tools
+
+      - name: Publier (cloud_publish.py)
+        if: env.SKIP_ALL != '1'
+        env:
+          META_LONG_LIVED_TOKEN: ${{ secrets.META_LONG_LIVED_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          APPROVAL_API_URL: ${{ secrets.APPROVAL_API_URL }}
+          APPROVAL_LINK_TOKEN: ${{ secrets.APPROVAL_LINK_TOKEN }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="--dry"; fi
+          python marketing/tools/cloud_publish.py $ARGS
+
+      - name: Committer l'état (si changements)
+        if: env.SKIP_ALL != '1' && github.event.inputs.dry_run != 'true'
+        run: |
+          git config user.name "PronoGo Cloud Publisher"
+          git config user.email "pronogo.dev@gmail.com"
+          git add marketing/reports/routines/posts/.published.json \
+                  marketing/reports/routines/posts/.refused.json \
+                  marketing/content_machine/CALENDRIER.json \
+                  marketing/content_machine/CALENDRIER.html \
+                  _PILOTAGE/sync_log.txt 2>/dev/null || true
+          if git diff --cached --quiet; then echo "Rien à committer."; exit 0; fi
+          git commit -m "state(cloud_publish) publications + refus + calendrier [skip ci]"
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
+            git pull --rebase origin main; sleep $((i * 3))
+          done
+          echo "Push échoué après 5 essais — le prochain passage rattrapera."

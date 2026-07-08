@@ -1,0 +1,139 @@
+name: "📤 Email des posts prêts (léger + lien de validation)"
+# Déclenché APRÈS build_menu (menu écrit). Envoie un mail léger : lien de la page
+# de validation pour IG/FB + pièces jointes pour X/TikTok.
+# Re-câblage cloud-gratuit : sélection des posts par DATE du jour (plus par git
+# diff de push) + garde-fou anti-doublon `.mailed_<date>` committé dans fc-pronox
+# → sûr à rejouer sur horaire. Destinataire = secret ALERT_EMAIL (jamais en clair
+# dans ce fichier public). Le PIN n'est JAMAIS envoyé (2e facteur).
+
+on:
+  workflow_run:
+    workflows: ["📋 Menu de validation du jour (cloud gratuit)"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Ré-envoyer même si déjà mailé aujourd'hui"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  mail:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 1
+
+      - name: Sélectionner les posts du jour (+ anti-doublon)
+        id: news
+        run: |
+          DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          DIR="marketing/reports/routines/posts"
+          MARKER="$DIR/.mailed_$DATE"
+          FORCE="${{ github.event.inputs.force }}"
+
+          if [ -f "$MARKER" ] && [ "$FORCE" != "true" ]; then
+            echo "Déjà mailé le $DATE (marqueur présent) → skip."
+            echo "should_send=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          # Posts du jour uniquement (fichiers <date>_*.html, hors fichiers d'état .*).
+          IGFB=""; XT=""
+          for p in "$DIR/${DATE}"_*.html; do
+            [ -f "$p" ] || continue
+            b=$(basename "$p")
+            case "$b" in
+              *_instagram_*|*_facebook_*) IGFB="$IGFB $b" ;;
+              *_x_*|*_tiktok_*) XT="$XT $p"; tw="${p%.html}.png"; [ -f "$tw" ] && XT="$XT $tw" ;;
+            esac
+          done
+
+          CAPPED=""; TOTAL=0
+          for p in $(echo "$XT" | tr ' ' '\n' | sort -u); do
+            [ -z "$p" ] && continue
+            S=$(stat -c%s "$p" 2>/dev/null || echo 0)
+            if [ $((TOTAL + S)) -le 15728640 ]; then CAPPED="$CAPPED $p"; TOTAL=$((TOTAL + S)); else echo "SKIP (plafond 15Mo): $p"; fi
+          done
+
+          IGFB_COUNT=$(echo $IGFB | wc -w)
+          XT_FILES=$(echo $CAPPED | xargs | tr ' ' ',')
+          XT_COUNT=$(echo $CAPPED | tr ' ' '\n' | grep -c '\.html$' || true)
+          TOTAL_COUNT=$((IGFB_COUNT + XT_COUNT))
+
+          if [ "$TOTAL_COUNT" = "0" ]; then
+            echo "Aucun post daté du $DATE → rien à envoyer."
+            echo "should_send=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          echo "should_send=1"          >> "$GITHUB_OUTPUT"
+          echo "total_count=$TOTAL_COUNT" >> "$GITHUB_OUTPUT"
+          echo "igfb_count=$IGFB_COUNT"  >> "$GITHUB_OUTPUT"
+          echo "xt_count=$XT_COUNT"      >> "$GITHUB_OUTPUT"
+          echo "xt_files=$XT_FILES"      >> "$GITHUB_OUTPUT"
+          IGFB_LIST=$(for f in $IGFB; do echo "• $f"; done)
+          XT_LIST=$(for f in $(echo $CAPPED | tr ' ' '\n' | grep '\.html$'); do basename "$f" | sed 's/^/• /'; done)
+          { echo "igfb_list<<EOF"; echo "$IGFB_LIST"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          { echo "xt_list<<EOF";   echo "$XT_LIST";   echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Envoyer l'email léger (Brevo SMTP)
+        if: steps.news.outputs.should_send == '1'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-relay.brevo.com
+          server_port: 587
+          username: ${{ secrets.BREVO_SMTP_USER }}
+          password: ${{ secrets.BREVO_SMTP_KEY }}
+          subject: "📤 PronoGo — ${{ steps.news.outputs.total_count }} post(s) prêt(s) à valider"
+          to: ${{ secrets.ALERT_EMAIL }}
+          reply_to: pronogo.dev@gmail.com
+          from: "PronoGo Machine <pronogo.dev@gmail.com>"
+          attachments: ${{ steps.news.outputs.xt_files }}
+          body: |
+            Salut Mehdi,
+
+            La machine a préparé des posts. Deux gestes :
+
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            1) INSTAGRAM / FACEBOOK (${{ steps.news.outputs.igfb_count }}) — validation en 1 page
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            📋 Ta sélection du jour 👉 https://pronogo-valider.web.app/?token=${{ secrets.APPROVAL_LINK_TOKEN }}
+
+            Coche ✅ Publier / ⏸ Plus tard / ❌ Non, règle l'heure, tape ton PIN, Envoie.
+            (Ton PIN reste dans ta tête — il n'est JAMAIS dans ce mail.)
+
+            ${{ steps.news.outputs.igfb_list }}
+
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            2) X / TIKTOK (${{ steps.news.outputs.xt_count }}) — à publier à la main
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            En pièces jointes : la carte (.html, légende à copier) + le visuel (.png).
+
+            ${{ steps.news.outputs.xt_list }}
+
+            — La machine PronoGo 🦅
+
+      - name: Marquer comme mailé (anti-doublon, committé dans fc-pronox)
+        if: steps.news.outputs.should_send == '1'
+        run: |
+          DATE="${{ steps.news.outputs.date }}"
+          MARKER="marketing/reports/routines/posts/.mailed_$DATE"
+          echo "mailed at $(date -u +%FT%TZ)" > "$MARKER"
+          git config user.name "PronoGo Cloud Mailer"
+          git config user.email "pronogo.dev@gmail.com"
+          git add "$MARKER"
+          git commit -m "state(mail) marqueur anti-doublon $DATE [skip ci]" || { echo "rien à committer"; exit 0; }
+          for i in 1 2 3; do
+            if git push origin HEAD:main; then exit 0; fi
+            git pull --rebase origin main; sleep $((i * 3))
+          done
+          echo "Push marqueur échoué — au pire un 2e mail partira, sans gravité."
