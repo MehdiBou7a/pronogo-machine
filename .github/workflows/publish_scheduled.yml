@@ -3,12 +3,12 @@ name: "☁️ Publication IG/FB automatique (cloud gratuit)"
 # Gardes-fous conservés : PAUSE_AUTOPUBLISH (fichier dans fc-pronox = stop),
 # porte d'approbation (silence = hold), anti-redondance, .published.json anti-doublon.
 #
-# ⚠️ DÉSARMÉ VOLONTAIREMENT : déclenchement MANUEL uniquement (workflow_dispatch)
+# ✅ ARMÉ (2026-07-08, GO fondateur) : cron */30 07h-23h Paris + manuel.
 #    tant que la machine n'est pas validée. POUR ARMER (publication auto toutes
 #    les 30 min), décommenter le bloc `schedule` ci-dessous (via une PR gardée).
 on:
-  # schedule:
-  #   - cron: "*/30 5-21 * * *"   # 07h-23h Paris (été) — DÉCOMMENTER POUR ARMER
+  schedule:
+    - cron: "*/30 5-21 * * *"   # 07h-23h Paris (été) — ARMÉ le 2026-07-08 (GO fondateur)
   workflow_dispatch:
     inputs:
       dry_run:
