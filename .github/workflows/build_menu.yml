@@ -63,6 +63,15 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="--dry"; fi
           python -X utf8 marketing/tools/build_approval_menu.py $ARGS
 
+      # BOUCLAGE : ramène les retours du fondateur (décisions + « pourquoi ») dans
+      # FEEDBACK_LOG.json → les routines de contenu liront `feedback.py digest`.
+      - name: Collecte des retours du fondateur (bouclage)
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          APPROVAL_LINK_TOKEN: ${{ secrets.APPROVAL_LINK_TOKEN }}
+          SUBMIT_APPROVAL_URL: ${{ secrets.APPROVAL_API_URL }}
+        run: python -X utf8 marketing/tools/feedback.py collect --days 10 || echo "collect feedback non bloquant"
+
       # Assemble le dossier du jour marketing/JOUR/{date}/ (tout le contenu réuni,
       # images copiées + format naturel) et le committe dans fc-pronox. Non
       # destructif + idempotent → un re-run (secours) complète le dossier.
@@ -73,9 +82,9 @@ jobs:
           python -X utf8 marketing/tools/build_jour.py --date "$DATE" || { echo "build_jour a échoué (non bloquant)"; exit 0; }
           git config user.name "PronoGo Cloud Jour"
           git config user.email "pronogo.dev@gmail.com"
-          git add marketing/JOUR/ 2>/dev/null || true
-          if git diff --cached --quiet; then echo "JOUR inchangé."; exit 0; fi
-          git commit -m "assemble(jour) $DATE [skip ci]"
+          git add marketing/JOUR/ marketing/content_machine/FEEDBACK_LOG.json 2>/dev/null || true
+          if git diff --cached --quiet; then echo "JOUR/feedback inchangés."; exit 0; fi
+          git commit -m "assemble(jour) + feedback $DATE [skip ci]"
           for i in 1 2 3; do
             if git push origin HEAD:main; then echo "Push JOUR OK."; exit 0; fi
             git pull --rebase origin main; sleep $((i * 3))
