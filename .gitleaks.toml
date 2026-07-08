@@ -1,0 +1,5 @@
+# Config gitleaks du garde-fou. Utilise les règles par défaut (detection large
+# des clés/tokens). Les références `${{ secrets.X }}` des workflows ne sont PAS
+# des secrets (aucune valeur) → aucun faux positif attendu.
+[extend]
+useDefault = true

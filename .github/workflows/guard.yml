@@ -1,0 +1,59 @@
+name: guard
+# Règle BLOQUANTE de pronogo-machine (dépôt public). S'exécute en premier sur
+# chaque push / PR. Fait échouer le run si le dépôt contient autre chose que ses
+# workflows + README + config, si un secret est détecté, ou si un motif interdit
+# (code appli / credential) apparaît. Couplé à la branch protection de `main`
+# (required check = « guard », admins inclus) → un push qui viole est REJETÉ.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (historique complet pour le scan secrets)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Liste blanche — aucun fichier hors périmètre
+        run: |
+          ALLOWED='^(\.github/workflows/[A-Za-z0-9_.-]+\.yml|\.github/dependabot\.yml|README\.md|\.gitleaks\.toml|\.gitignore|LICENSE)$'
+          BAD=$(git ls-files | grep -vE "$ALLOWED" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::RÈGLE BLOQUANTE — fichier(s) hors périmètre dans ce dépôt public :"
+            echo "$BAD" | sed 's/^/   • /'
+            echo "Ce dépôt ne contient QUE les workflows d'orchestration + README/config."
+            echo "Scripts, données et code appli restent dans fc-pronox (privé)."
+            exit 1
+          fi
+          echo "✅ Liste blanche OK ($(git ls-files | wc -l) fichiers, tous autorisés)."
+
+      - name: Motifs interdits (défense en profondeur)
+        run: |
+          if git ls-files | grep -nE '(\.dart$|(^|/)\.env|\.jks$|\.keystore$|\.p8$|serviceAccount.*\.json$|\.mobileprovision$|(^|/)lib/|(^|/)functions/)'; then
+            echo "::error::Motif interdit détecté (code appli / secret / credential)."
+            exit 1
+          fi
+          echo "✅ Aucun motif interdit."
+
+      - name: Scan secrets (gitleaks)
+        run: |
+          VER=8.21.2
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" -o /tmp/gl.tgz
+          tar -xzf /tmp/gl.tgz -C /tmp gitleaks
+          chmod +x /tmp/gitleaks
+          /tmp/gitleaks detect --source . --redact --no-banner --exit-code 1
+          echo "✅ gitleaks : aucun secret détecté."

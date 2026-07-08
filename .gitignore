@@ -1,0 +1,10 @@
+# Ce dépôt ne doit jamais contenir de données ni de secrets. Par sécurité, on
+# ignore explicitement les familles sensibles (le garde-fou les rejette AUSSI).
+*.log
+*.env
+*.env.*
+*.jks
+*.keystore
+*.p8
+serviceAccount*.json
+*.mobileprovision
