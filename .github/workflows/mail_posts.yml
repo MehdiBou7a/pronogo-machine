@@ -63,6 +63,21 @@ jobs:
           echo "should_send=1"     >> "$GITHUB_OUTPUT"
           echo "total_count=$COUNT" >> "$GITHUB_OUTPUT"
 
+      - name: Composer le corps + les pièces jointes (grille · calendrier % · pack usine)
+        if: steps.news.outputs.should_send == '1'
+        id: extras
+        env:
+          APPROVAL_LINK_TOKEN: ${{ secrets.APPROVAL_LINK_TOKEN }}
+        run: |
+          DATE="${{ steps.news.outputs.date }}"
+          python -X utf8 marketing/tools/mail_extras.py --date "$DATE"             --count "${{ steps.news.outputs.total_count }}"             --link "https://pronogo-valider.web.app/?token=$APPROVAL_LINK_TOKEN" > /tmp/mail_body.txt
+          ATT=""
+          GRILLE="marketing/JOUR/$DATE/${DATE}_grille.png"
+          [ -f "$GRILLE" ] && ATT="$GRILLE"
+          USINE="marketing/reports/routines/usine/$DATE.html"
+          [ -f "$USINE" ] && ATT="$ATT,$USINE"
+          echo "attachments=${ATT#,}" >> "$GITHUB_OUTPUT"
+
       - name: Envoyer l'email léger (Brevo SMTP)
         if: steps.news.outputs.should_send == '1'
         uses: dawidd6/action-send-mail@v3
@@ -75,21 +90,8 @@ jobs:
           to: ${{ secrets.ALERT_EMAIL }}
           reply_to: pronogo.dev@gmail.com
           from: "PronoGo Machine <pronogo.dev@gmail.com>"
-          body: |
-            Salut Mehdi,
-
-            La machine a préparé ${{ steps.news.outputs.total_count }} post(s) du jour.
-
-            👉 TOUT est sur UNE page (Instagram/Facebook + X/TikTok + vidéo + grille) :
-            https://pronogo-valider.web.app/?token=${{ secrets.APPROVAL_LINK_TOKEN }}
-
-            • Instagram / Facebook : coche ✅ Publier / ⏸ Plus tard / ❌ Non + l'heure → la machine publie.
-            • X / TikTok / vidéo : copie la légende (bouton sur la page) et publie à la main.
-            • Écris un retour sous un post → la machine apprend de toi.
-
-            Ton PIN reste dans ta tête — il n'est JAMAIS dans ce mail.
-
-            — La machine PronoGo 🦅
+          attachments: ${{ steps.extras.outputs.attachments }}
+          body: file:///tmp/mail_body.txt
 
       - name: Marquer comme mailé (anti-doublon, committé dans fc-pronox)
         if: steps.news.outputs.should_send == '1'
