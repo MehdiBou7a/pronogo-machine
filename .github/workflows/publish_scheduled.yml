@@ -73,6 +73,19 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="--dry"; fi
           python marketing/tools/cloud_publish.py $ARGS
 
+
+      # FILET MENU (2026-07-10) : le déclenchement de build_menu par les routines
+      # échoue (droits gh manquants côté claude.ai) et les crons GitHub dérivent
+      # (menu absent 2 jours de suite au réveil du fondateur). Le publieur, lui,
+      # tourne fiablement → il rafraîchit AUSSI le menu de validation à chaque
+      # passage. Idempotent (approval_menus/{date} = set sans merge, rejouable).
+      - name: Filet — reconstruire le menu de validation (idempotent)
+        if: env.SKIP_ALL != '1' && github.event.inputs.dry_run != 'true'
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          ADMIN_SYNC_TOKEN: ${{ secrets.ADMIN_SYNC_TOKEN }}
+        run: python -X utf8 marketing/tools/build_approval_menu.py || echo "filet menu non bloquant"
+
       - name: Committer l'état (si changements)
         if: env.SKIP_ALL != '1' && github.event.inputs.dry_run != 'true'
         run: |
