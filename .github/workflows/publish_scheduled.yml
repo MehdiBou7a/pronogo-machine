@@ -86,12 +86,21 @@ jobs:
           ADMIN_SYNC_TOKEN: ${{ secrets.ADMIN_SYNC_TOKEN }}
         run: python -X utf8 marketing/tools/build_approval_menu.py || echo "filet menu non bloquant"
 
+      # FILET BOUCLAGE (2026-07-10) : la collecte des retours fondateur vivait
+      # aussi dans build_menu (en panne le matin) -> le batch de 11h tournait
+      # SANS les lecons de la veille. Le publieur collecte a chaque passage.
+      - name: Filet - collecter les retours du fondateur (bouclage)
+        if: env.SKIP_ALL != '1' && github.event.inputs.dry_run != 'true'
+        env:
+          APPROVAL_LINK_TOKEN: ${{ secrets.APPROVAL_LINK_TOKEN }}
+        run: python -X utf8 marketing/tools/feedback.py collect --days 10 || echo 'collect non bloquant'
+
       - name: Committer l'état (si changements)
         if: env.SKIP_ALL != '1' && github.event.inputs.dry_run != 'true'
         run: |
           git config user.name "PronoGo Cloud Publisher"
           git config user.email "pronogo.dev@gmail.com"
-          git add marketing/reports/routines/posts/.published.json \
+          git add marketing/content_machine/FEEDBACK_LOG.json marketing/reports/routines/posts/.published.json \
                   marketing/reports/routines/posts/.refused.json \
                   marketing/content_machine/CALENDRIER.json \
                   marketing/content_machine/CALENDRIER.html \
