@@ -75,6 +75,7 @@ jobs:
             marketing/tools/comprehend.py \
             marketing/tools/consolidate.py \
             marketing/tools/select_edito.py \
+            marketing/tools/actu_run.py \
             marketing/tools/flop_run.py \
             marketing/tools/meme_run.py \
             marketing/tools/produit_run.py \
