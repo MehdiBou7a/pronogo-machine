@@ -51,11 +51,20 @@ jobs:
           python -X utf8 marketing/tools/tournage.py "${FLOW:-auto}"
 
       - name: Conversion mp4 (si rush produit)
+        # Loi anti-échec-silencieux (2026-07-20) : la 1re prise a « réussi » en
+        # vert avec `ffmpeg: command not found` — le runner ne l'a PAS d'office.
+        # On l'installe, et un échec de conversion FAIT ÉCHOUER le job.
         run: |
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
           for f in marketing/tournage/rushes/*.webm; do
             [ -e "$f" ] || continue
-            ffmpeg -y -loglevel error -i "$f" -c:v libx264 -pix_fmt yuv420p -crf 20 "${f%.webm}.mp4" && rm "$f"
-            echo "→ ${f%.webm}.mp4"
+            if ffmpeg -y -loglevel error -i "$f" -c:v libx264 -pix_fmt yuv420p -crf 20 "${f%.webm}.mp4"; then
+              rm "$f"
+              echo "→ ${f%.webm}.mp4"
+            else
+              echo "::error::Conversion mp4 ÉCHOUÉE pour $f (le webm est conservé)"
+              exit 1
+            fi
           done
 
       - name: Commit rushes + captures
