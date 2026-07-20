@@ -1,0 +1,94 @@
+name: "⚽ Usine tipster (grille + Goalardo) — cloud gratuit"
+# NOUVELLE usine de contenu (remplace prono_daily). Orchestrateur public : le code
+# + les données vivent dans fc-pronox (privé), checkout via FCPRONOX_PAT, l'état
+# est recommitté dans fc-pronox. Snapshot matchs via scénario admin READ-ONLY
+# (0 appel api-football), sur PLUSIEURS compétitions (Europe + championnats).
+
+on:
+  schedule:
+    - cron: "0 9 * * *"    # 11h Paris (été) — usine du MATIN (grille + paris du jour)
+    - cron: "0 21 * * *"   # 23h Paris (été) — usine du SOIR (résultats + bilan des picks)
+  workflow_dispatch:
+    inputs:
+      competitions:
+        description: "Compétitions (liste virgules)"
+        type: string
+        default: "WC,CL,EL,ECL,FL1,PL,PD,BL1,SA"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: usine-tipster
+  cancel-in-progress: false
+
+jobs:
+  usine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 2
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer Pillow (rendu des visuels)
+        run: pip install --quiet Pillow
+
+      - name: Snapshot matchs multi-compétitions (scénario admin read-only)
+        env:
+          ADMIN_SYNC_TOKEN: ${{ secrets.ADMIN_SYNC_TOKEN }}
+        run: |
+          COMPS="${{ github.event.inputs.competitions }}"; COMPS="${COMPS:-WC,CL,EL,ECL,FL1,PL,PD,BL1,SA}"
+          mkdir -p marketing/tools/.api_cache
+          echo '[]' > snap.json
+          IFS=',' read -ra LIST <<< "$COMPS"
+          for COMP in "${LIST[@]}"; do
+            URL="https://europe-west9-fc-pronox.cloudfunctions.net/syncTrigger?scenario=export-matches-snapshot&competition=${COMP}"
+            if curl -sS -f -H "x-admin-token: ${ADMIN_SYNC_TOKEN}" "$URL" -o /tmp/resp.json \
+               && jq -e '.result.matches | type == "array"' /tmp/resp.json > /dev/null; then
+              jq -s '.[0] + .[1]' snap.json <(jq '.result.matches' /tmp/resp.json) > merged.json && mv merged.json snap.json
+              echo "  ${COMP}: $(jq '.result.count // (.result.matches|length)' /tmp/resp.json) matchs."
+            else
+              echo "  ${COMP}: (vide ou indisponible, ignoré)."
+            fi
+          done
+          mv snap.json marketing/tools/.api_cache/wc_matches_snapshot.json
+          echo "Snapshot total: $(jq 'length' marketing/tools/.api_cache/wc_matches_snapshot.json) matchs."
+
+      - name: Lancer la nouvelle usine (grille + Goalardo + journal + blessures)
+        run: |
+          python marketing/tools/injury_detect.py      || echo "injury_detect KO (non bloquant)"
+          python marketing/tools/grille_jour.py         || echo "grille_jour KO (non bloquant)"
+          python marketing/tools/goalardo_candidates.py || echo "goalardo KO (non bloquant)"
+          python marketing/tools/journal_tipster.py     || echo "journal KO (non bloquant)"
+          # NB : bilan_semaine (lundi) nécessite un accès Firestore user -> chantier séparé, non lancé ici.
+
+      - name: Committer les cartes + sorties (si changements)
+        run: |
+          git config user.name "PronoGo Cloud Usine"
+          git config user.email "pronogo.dev@gmail.com"
+          git add marketing/reports/routines/posts/ \
+                  marketing/reports/routines/grille_jour/ \
+                  marketing/content_machine/a_valider/goalardo/ \
+                  marketing/content_machine/injuries_du_jour.json \
+                  marketing/content_machine/GOALARDO_RDV.json \
+                  _PILOTAGE/tipster/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Rien à committer (usine du jour déjà présente)."; exit 0
+          fi
+          git commit -m "usine(tipster) $(date -u +%Y-%m-%d) [cloud]"
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
+            echo "Push refusé (essai $i) → pull --rebase puis retry..."
+            git pull --rebase origin main; sleep $((i * 3))
+          done
+          echo "Push échoué après 5 essais — le prochain run rattrapera."
