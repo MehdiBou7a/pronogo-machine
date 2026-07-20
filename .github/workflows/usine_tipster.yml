@@ -26,7 +26,7 @@ concurrency:
 jobs:
   usine:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 90   # décision fondateur 20/07 : la qualité avant le chrono (repo public = minutes gratuites)
     steps:
       - name: Checkout fc-pronox (privé)
         uses: actions/checkout@v4
@@ -87,13 +87,12 @@ jobs:
             marketing/tools/flop_run.py \
             marketing/tools/meme_run.py \
             marketing/tools/produit_run.py \
-            marketing/tools/montage_run.py \
             marketing/tools/injury_detect.py \
             marketing/tools/grille_jour.py \
             marketing/tools/goalardo_candidates.py \
             marketing/tools/journal_tipster.py ; do
             echo "──────── $S ────────"
-            if python -X utf8 "$S"; then echo "✅ OK  $S"; else echo "❌ ÉCHEC  $S (code $?)"; fail=1; fi
+            if timeout -k 20 1800 python -X utf8 "$S"; then echo "✅ OK  $S"; else echo "❌ ÉCHEC  $S (code $?)"; fail=1; fi   # 30 min max PAR script : un déraillement ne tue plus les autres phases
           done
           echo "════════ RÉCAP USINE ════════"
           [ "$fail" = "1" ] && echo "::warning::au moins un script a échoué (voir ci-dessus)" || echo "Tous les scripts OK."
