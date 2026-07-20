@@ -1,0 +1,96 @@
+name: "🎞️ Short automatique (rush → Remotion → file de validation)"
+# PHASE 2 du chantier vidéo (2026-07-21) : après chaque tournage réussi, si le
+# Réalisateur a déclaré « tournage prêt » dans son journal, le dernier rush
+# mp4 non monté passe dans derush.py --engine remotion (choix des moments +
+# motion design) puis devient une CARTE VIDÉO posts/{date}_video_{slug}
+# (post_card.emit_video) → la file de validation du fondateur. JAMAIS publié
+# tout seul. Brief (hook/kicker/punchlines) : video_du_jour.json du Journaliste.
+
+on:
+  workflow_run:
+    workflows: ["🎬 Tournage automatique (rushes app web) — cloud gratuit"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Monter MÊME sans « tournage prêt » du Réalisateur (test)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: short
+  cancel-in-progress: false
+
+jobs:
+  short:
+    # Après tournage : uniquement s'il a réussi. En dispatch : toujours.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 2
+
+      - name: Porte « tournage prêt » (le Réalisateur décide)
+        id: gate
+        run: |
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "go=1" >> "$GITHUB_OUTPUT"; echo "Porte FORCÉE (dispatch de test)."; exit 0
+          fi
+          if grep -qi "tournage prêt" marketing/tournage/JOURNAL_REALISATEUR.md 2>/dev/null; then
+            echo "go=1" >> "$GITHUB_OUTPUT"; echo "Porte OUVERTE (« tournage prêt » au journal)."
+          else
+            echo "go=0" >> "$GITHUB_OUTPUT"
+            echo "Porte FERMÉE : le Réalisateur n'a pas encore écrit « tournage prêt » — rien à monter."
+          fi
+
+      - name: Setup Python
+        if: steps.gate.outputs.go == '1'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        if: steps.gate.outputs.go == '1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Dépendances (ffmpeg + OpenCV + Remotion)
+        if: steps.gate.outputs.go == '1'
+        run: |
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          pip install --quiet opencv-python-headless numpy pillow
+          npm ci --prefix marketing/content_machine/remotion_engine
+
+      - name: Montage (derush → Remotion → carte de validation)
+        if: steps.gate.outputs.go == '1'
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python -X utf8 marketing/tools/short_run.py
+
+      - name: Commit carte + stamp
+        if: steps.gate.outputs.go == '1'
+        run: |
+          git config user.name "PronoGo Monteur"
+          git config user.email "pronogo.dev@gmail.com"
+          git add marketing/reports/routines/posts/ marketing/tournage/rushes/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Rien à committer (aucun rush neuf à monter)."; exit 0
+          fi
+          git commit -m "short($(date -u +%Y-%m-%d)) rush monté → file de validation [cloud]"
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then echo "Push OK."; exit 0; fi
+            git pull --rebase origin main; sleep $((i * 3))
+          done
+          echo "::error::Push impossible après 5 tentatives"
+          exit 1
