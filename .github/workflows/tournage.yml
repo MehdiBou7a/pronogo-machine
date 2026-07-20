@@ -4,12 +4,14 @@ name: "🎬 Tournage automatique (rushes app web) — cloud gratuit"
 # derush.py → Remotion → short. Phase 1 (repérage/itération des parcours).
 
 on:
+  schedule:
+    - cron: "30 6,12,18 * * *"   # 3 prises/jour — le Réalisateur (routine Claude) règle le parcours 30 min après chaque prise
   workflow_dispatch:
     inputs:
       flow:
-        description: "Nom du parcours (marketing/tournage/flows.json)"
+        description: "Nom du parcours (marketing/tournage/flows.json) — 'auto' = flow actif"
         type: string
-        default: "reperage"
+        default: "auto"
 
 permissions:
   contents: read
@@ -46,7 +48,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           FLOW="${{ github.event.inputs.flow }}"
-          python -X utf8 marketing/tools/tournage.py "${FLOW:-reperage}"
+          python -X utf8 marketing/tools/tournage.py "${FLOW:-auto}"
 
       - name: Conversion mp4 (si rush produit)
         run: |
