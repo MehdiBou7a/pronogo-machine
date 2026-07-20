@@ -41,8 +41,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Dépendances (rendu + réseau)
-        run: pip install --quiet Pillow requests feedparser
+      - name: Dépendances (rendu + réseau + montage photo réelle)
+        # opencv+onnxruntime = détection visage (yunet) + détourage u2netp (modèles
+        # BUNDLÉS dans fc-pronox, zéro téléchargement). rembg = détourage premium
+        # isnet (télécharge son modèle au 1er usage ; si échec → fallback u2netp).
+        run: pip install --quiet Pillow requests feedparser opencv-python-headless onnxruntime numpy rembg
 
       - name: Snapshot matchs multi-compétitions (scénario admin read-only)
         env:
@@ -75,6 +78,7 @@ jobs:
             marketing/tools/flop_run.py \
             marketing/tools/meme_run.py \
             marketing/tools/produit_run.py \
+            marketing/tools/montage_run.py \
             marketing/tools/injury_detect.py \
             marketing/tools/grille_jour.py \
             marketing/tools/goalardo_candidates.py \
@@ -95,6 +99,7 @@ jobs:
                   marketing/content_machine/a_valider/ \
                   marketing/content_machine/*.json \
                   marketing/content_machine/GOALARDO_RDV.json \
+                  marketing/photo_staging/ \
                   _PILOTAGE/tipster/ 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Rien à committer (usine du jour déjà présente)."; exit 0
