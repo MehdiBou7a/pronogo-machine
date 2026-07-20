@@ -68,6 +68,7 @@ jobs:
       - name: Lancer l'usine (récap ✅/❌ par script, non bloquant mais VISIBLE)
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FAL_KEY: ${{ secrets.FAL_KEY }}   # fonds Flux (10 € fondateur) — absent/épuisé → fallback bibliothèque, 0 crash
           PYTHONUNBUFFERED: "1"   # logs en DIRECT (pas de buffer perdu si un script traîne/est tué)
         run: |
           fail=0
@@ -102,6 +103,7 @@ jobs:
                   marketing/content_machine/*.json \
                   marketing/content_machine/GOALARDO_RDV.json \
                   marketing/photo_staging/ \
+                  marketing/assets/bg_library/ \
                   _PILOTAGE/tipster/ 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Rien à committer (usine du jour déjà présente)."; exit 0
