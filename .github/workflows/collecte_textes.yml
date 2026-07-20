@@ -1,0 +1,65 @@
+name: "📰 Collecte + textes d'articles (pour le Journaliste Claude) — cloud gratuit"
+# Le bac à sable des routines Claude n'a pas accès aux sites de presse (proxy 403).
+# GitHub Actions, si : ce workflow collecte les flux ET télécharge les TEXTES des
+# articles, puis committe le tout (avec les tampons du jour) → le Journaliste
+# Claude (routine 10h15/22h15 Paris) lit depuis son checkout, sans réseau.
+
+on:
+  schedule:
+    - cron: "0 8 * * *"    # 10h Paris (été) — avant le Journaliste de 10h15
+    - cron: "0 20 * * *"   # 22h Paris (été) — avant le Journaliste de 22h15
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collecte-textes
+  cancel-in-progress: false
+
+jobs:
+  collecte:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 2
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Dépendances
+        run: pip install --quiet feedparser requests
+
+      - name: Collecte + téléchargement des textes d'articles
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python -X utf8 marketing/tools/rss_ingest.py
+          python -X utf8 marketing/tools/dump_textes.py
+
+      - name: Commit (textes + tampons du jour)
+        run: |
+          git config user.name "PronoGo Collecte"
+          git config user.email "pronogo.dev@gmail.com"
+          git add marketing/content_machine/infos_du_jour.json \
+                  marketing/content_machine/infos_du_jour.json.stamp \
+                  marketing/content_machine/textes_articles.json \
+                  marketing/content_machine/textes_articles.json.stamp 2>/dev/null || true
+          git add marketing/content_machine/ALERTE_gnews.txt 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Rien à committer."; exit 0
+          fi
+          git commit -m "collecte(textes) $(date -u +%Y-%m-%dT%H:%M) [cloud]"
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
+            git pull --rebase origin main; sleep $((i * 3))
+          done
+          echo "Push échoué après 5 essais."
