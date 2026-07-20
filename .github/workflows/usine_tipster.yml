@@ -47,6 +47,12 @@ jobs:
         # isnet (télécharge son modèle au 1er usage ; si échec → fallback u2netp).
         run: pip install --quiet Pillow requests feedparser opencv-python-headless onnxruntime numpy rembg
 
+      - name: Cache modèles rembg (~170 Mo — fini le re-téléchargement à chaque run)
+        uses: actions/cache@v4
+        with:
+          path: ~/.u2net
+          key: u2net-models-v1
+
       - name: Snapshot matchs multi-compétitions (scénario admin read-only)
         env:
           ADMIN_SYNC_TOKEN: ${{ secrets.ADMIN_SYNC_TOKEN }}
