@@ -1,0 +1,71 @@
+name: "🎬 Tournage automatique (rushes app web) — cloud gratuit"
+# LE CAMERAMAN : un Chrome piloté au format téléphone joue un parcours dans
+# l'appli web PronoGo et s'enregistre. Rushes committés dans fc-pronox →
+# derush.py → Remotion → short. Phase 1 (repérage/itération des parcours).
+
+on:
+  workflow_dispatch:
+    inputs:
+      flow:
+        description: "Nom du parcours (marketing/tournage/flows.json)"
+        type: string
+        default: "reperage"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tournage
+  cancel-in-progress: false
+
+jobs:
+  tournage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 2
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Playwright + Chromium
+        run: |
+          pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Tournage
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          FLOW="${{ github.event.inputs.flow }}"
+          python -X utf8 marketing/tools/tournage.py "${FLOW:-reperage}"
+
+      - name: Conversion mp4 (si rush produit)
+        run: |
+          for f in marketing/tournage/rushes/*.webm; do
+            [ -e "$f" ] || continue
+            ffmpeg -y -loglevel error -i "$f" -c:v libx264 -pix_fmt yuv420p -crf 20 "${f%.webm}.mp4" && rm "$f"
+            echo "→ ${f%.webm}.mp4"
+          done
+
+      - name: Commit rushes + captures
+        run: |
+          git config user.name "PronoGo Cameraman"
+          git config user.email "pronogo.dev@gmail.com"
+          git add marketing/tournage/rushes/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Rien à committer."; exit 0
+          fi
+          git commit -m "tournage($(date -u +%Y-%m-%d)) rushes [cloud]"
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then echo "Push OK."; exit 0; fi
+            git pull --rebase origin main; sleep $((i * 3))
+          done
