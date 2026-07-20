@@ -4,9 +4,12 @@ name: "🎯 Prono du jour + grille (cloud gratuit)"
 # Snapshot matches via scénario admin READ-ONLY (0 appel api-football).
 
 on:
-  schedule:
-    - cron: "0 9 * * *"    # 11h Paris (été) — grille du MATIN : picks + probas + résultats déjà connus
-    - cron: "0 21 * * *"   # 23h Paris (été) — grille du SOIR : le BILAN (tous les résultats + ✅/❌ vs nos picks)
+  # ⛔ DÉSACTIVÉ le 2026-07-20 — remplacé par usine_tipster.yml (nouvelle usine :
+  #    grille par championnat + paris Goalardo). Schedule commenté, GARDÉ pour
+  #    ROLLBACK : lançable à la main (workflow_dispatch). Réactiver = décommenter.
+  # schedule:
+  #   - cron: "0 9 * * *"    # 11h Paris
+  #   - cron: "0 21 * * *"   # 23h Paris
   workflow_dispatch:
     inputs:
       competition:
