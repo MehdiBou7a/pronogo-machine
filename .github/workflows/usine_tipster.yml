@@ -1,13 +1,14 @@
-name: "⚽ Usine tipster (grille + Goalardo) — cloud gratuit"
-# NOUVELLE usine de contenu (remplace prono_daily). Orchestrateur public : le code
-# + les données vivent dans fc-pronox (privé), checkout via FCPRONOX_PAT, l'état
-# est recommitté dans fc-pronox. Snapshot matchs via scénario admin READ-ONLY
-# (0 appel api-football), sur PLUSIEURS compétitions (Europe + championnats).
+name: "🏭 Usine de contenu (actu + memes + produit + tipster) — cloud gratuit"
+# Usine COMPLÈTE offline (0 jeton). Le code + les données vivent dans fc-pronox
+# (privé), checkout via FCPRONOX_PAT, l'état est recommitté dans fc-pronox.
+# Chaîne : actu 4 phases (récolte→comprend→consolide→sélectionne) → flop → memes →
+# produit → tipster (grille + Goalardo). Chaque producteur émet une carte posts/
+# → mail + validation + publi FB/IG. Snapshot matchs via scénario admin read-only.
 
 on:
   schedule:
-    - cron: "0 9 * * *"    # 11h Paris (été) — usine du MATIN (grille + paris du jour)
-    - cron: "0 21 * * *"   # 23h Paris (été) — usine du SOIR (résultats + bilan des picks)
+    - cron: "0 9 * * *"    # 11h Paris (été) — usine du MATIN
+    - cron: "0 21 * * *"   # 23h Paris (été) — usine du SOIR
   workflow_dispatch:
     inputs:
       competitions:
@@ -19,13 +20,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: usine-tipster
+  group: usine-contenu
   cancel-in-progress: false
 
 jobs:
   usine:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout fc-pronox (privé)
         uses: actions/checkout@v4
@@ -40,8 +41,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Installer Pillow (rendu des visuels)
-        run: pip install --quiet Pillow
+      - name: Dépendances (rendu + réseau)
+        run: pip install --quiet Pillow requests feedparser
 
       - name: Snapshot matchs multi-compétitions (scénario admin read-only)
         env:
@@ -56,21 +57,33 @@ jobs:
             if curl -sS -f -H "x-admin-token: ${ADMIN_SYNC_TOKEN}" "$URL" -o /tmp/resp.json \
                && jq -e '.result.matches | type == "array"' /tmp/resp.json > /dev/null; then
               jq -s '.[0] + .[1]' snap.json <(jq '.result.matches' /tmp/resp.json) > merged.json && mv merged.json snap.json
-              echo "  ${COMP}: $(jq '.result.count // (.result.matches|length)' /tmp/resp.json) matchs."
-            else
-              echo "  ${COMP}: (vide ou indisponible, ignoré)."
             fi
           done
           mv snap.json marketing/tools/.api_cache/wc_matches_snapshot.json
-          echo "Snapshot total: $(jq 'length' marketing/tools/.api_cache/wc_matches_snapshot.json) matchs."
+          echo "Snapshot: $(jq 'length' marketing/tools/.api_cache/wc_matches_snapshot.json) matchs."
 
-      - name: Lancer la nouvelle usine (grille + Goalardo + journal + blessures)
+      - name: Lancer l'usine (récap ✅/❌ par script, non bloquant mais VISIBLE)
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          python marketing/tools/injury_detect.py      || echo "injury_detect KO (non bloquant)"
-          python marketing/tools/grille_jour.py         || echo "grille_jour KO (non bloquant)"
-          python marketing/tools/goalardo_candidates.py || echo "goalardo KO (non bloquant)"
-          python marketing/tools/journal_tipster.py     || echo "journal KO (non bloquant)"
-          # NB : bilan_semaine (lundi) nécessite un accès Firestore user -> chantier séparé, non lancé ici.
+          fail=0
+          for S in \
+            marketing/tools/rss_ingest.py \
+            marketing/tools/comprehend.py \
+            marketing/tools/consolidate.py \
+            marketing/tools/select_edito.py \
+            marketing/tools/flop_run.py \
+            marketing/tools/meme_run.py \
+            marketing/tools/produit_run.py \
+            marketing/tools/injury_detect.py \
+            marketing/tools/grille_jour.py \
+            marketing/tools/goalardo_candidates.py \
+            marketing/tools/journal_tipster.py ; do
+            echo "──────── $S ────────"
+            if python -X utf8 "$S"; then echo "✅ OK  $S"; else echo "❌ ÉCHEC  $S (code $?)"; fail=1; fi
+          done
+          echo "════════ RÉCAP USINE ════════"
+          [ "$fail" = "1" ] && echo "::warning::au moins un script a échoué (voir ci-dessus)" || echo "Tous les scripts OK."
 
       - name: Committer les cartes + sorties (si changements)
         run: |
@@ -78,17 +91,17 @@ jobs:
           git config user.email "pronogo.dev@gmail.com"
           git add marketing/reports/routines/posts/ \
                   marketing/reports/routines/grille_jour/ \
-                  marketing/content_machine/a_valider/goalardo/ \
-                  marketing/content_machine/injuries_du_jour.json \
+                  marketing/reports/routines/bilan/ \
+                  marketing/content_machine/a_valider/ \
+                  marketing/content_machine/*.json \
                   marketing/content_machine/GOALARDO_RDV.json \
                   _PILOTAGE/tipster/ 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Rien à committer (usine du jour déjà présente)."; exit 0
           fi
-          git commit -m "usine(tipster) $(date -u +%Y-%m-%d) [cloud]"
+          git commit -m "usine(contenu) $(date -u +%Y-%m-%d) [cloud]"
           for i in 1 2 3 4 5; do
             if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
-            echo "Push refusé (essai $i) → pull --rebase puis retry..."
             git pull --rebase origin main; sleep $((i * 3))
           done
           echo "Push échoué après 5 essais — le prochain run rattrapera."
