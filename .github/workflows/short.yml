@@ -71,6 +71,21 @@ jobs:
           pip install --quiet opencv-python-headless numpy pillow
           npm ci --prefix marketing/content_machine/remotion_engine
 
+      - name: Brief du Scénariste (branche claude/brief-video)
+        if: steps.gate.outputs.go == '1'
+        # Les sessions cloud du Scénariste ne peuvent pas pousser sur main —
+        # elles déposent video_du_jour.json sur claude/brief-video (force-push,
+        # un seul slot). On le récupère ici ; l'anti-zombie de short_run.py
+        # (date ≠ aujourd'hui → refus) garde la main sur la fraîcheur.
+        run: |
+          if git fetch origin claude/brief-video 2>/dev/null; then
+            git checkout FETCH_HEAD -- marketing/content_machine/video_du_jour.json 2>/dev/null \
+              && echo "Brief du Scénariste récupéré." \
+              || echo "Branche présente mais pas de brief dedans — montage neutre."
+          else
+            echo "Pas de branche claude/brief-video — montage neutre."
+          fi
+
       - name: Montage (derush → Remotion → carte de validation)
         if: steps.gate.outputs.go == '1'
         env:
