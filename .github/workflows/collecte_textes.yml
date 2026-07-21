@@ -60,6 +60,6 @@ jobs:
           git commit -m "collecte(textes) $(date -u +%Y-%m-%dT%H:%M) [cloud]"
           for i in 1 2 3 4 5; do
             if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
-            git pull --rebase origin main; sleep $((i * 3))
+            git pull --rebase --autostash origin main; sleep $((i * 3))
           done
           echo "Push échoué après 5 essais."
