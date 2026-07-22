@@ -6,8 +6,8 @@ name: "📰 Collecte + textes d'articles (pour le Journaliste Claude) — cloud 
 
 on:
   schedule:
-    - cron: "0 8 * * *"    # 10h Paris (été) — avant le Journaliste de 10h15
-    - cron: "0 20 * * *"   # 22h Paris (été) — avant le Journaliste de 22h15
+    - cron: "40 6 * * *"   # 08h40 Paris (été) — minute creuse anti-retard GH, large marge avant le Journaliste de 10h15 (3 jours de chaîne bloquée 20-22/07 : cron 08h00 pile partait avec 2h+ de retard)
+    - cron: "40 18 * * *"  # 20h40 Paris (été) — même logique minute creuse
   workflow_dispatch: {}
 
 permissions:
