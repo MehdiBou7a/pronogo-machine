@@ -7,8 +7,11 @@ name: "🏭 Usine de contenu (actu + memes + produit + tipster) — cloud gratui
 
 on:
   schedule:
-    - cron: "0 9 * * *"    # 11h Paris (été) — usine du MATIN
-    - cron: "0 21 * * *"   # 23h Paris (été) — usine du SOIR
+    # Chaîne événementielle 26/07 : l'usine démarre TÔT (le retard GH fait le reste,
+    # +1h à +2h30 mesuré) puis ATTEND le commit « fiches » du Journaliste (step
+    # ci-dessous) — elle part dans les 3 min qui suivent, plus de course aux crons.
+    - cron: "20 5 * * *"   # 07h20 Paris (été) — usine du MATIN (attend le Journaliste ~06:30-08:35 UTC)
+    - cron: "20 18 * * *"  # 20h20 Paris (été) — usine du SOIR (attend le Journaliste ~20:30 UTC)
   workflow_dispatch:
     inputs:
       competitions:
@@ -26,7 +29,7 @@ concurrency:
 jobs:
   usine:
     runs-on: ubuntu-latest
-    timeout-minutes: 90   # décision fondateur 20/07 : la qualité avant le chrono (repo public = minutes gratuites)
+    timeout-minutes: 300   # attente Journaliste (max 3h) + production (90 min qualité-avant-chrono) — minutes gratuites repo public
     steps:
       - name: Checkout fc-pronox (privé)
         uses: actions/checkout@v4
@@ -34,7 +37,26 @@ jobs:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
           ref: main
-          fetch-depth: 2
+          fetch-depth: 50   # profondeur pour retrouver le commit « fiches » du cycle dans le log
+
+      - name: Attendre les fiches du Journaliste (chaînage événementiel, max 3h)
+        # La routine Claude n'est déclenchable que par cron (autre compte) : on inverse
+        # le lien — l'usine poll le commit « journaliste-claude: … fiches » du CYCLE
+        # (matin = aujourd'hui ; soir = après 18:00 UTC pour ignorer les fiches du matin)
+        # et démarre dans les 3 min qui suivent. Timeout 3h → filet Groq (comme avant).
+        run: |
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" -lt 15 ]; then SINCE="$(date -u +%F)T00:00:00Z"; CYCLE="matin"; else SINCE="$(date -u +%F)T18:00:00Z"; CYCLE="soir"; fi
+          echo "Cycle $CYCLE — attente d'un commit 'journaliste-claude … fiches' postérieur à $SINCE"
+          for i in $(seq 1 60); do
+            git fetch -q origin main && git reset -q --hard origin/main
+            if [ -n "$(git log --since="$SINCE" --grep='journaliste-claude' --grep='fiches' --all-match --format=%h -1)" ]; then
+              echo "✅ Fiches du Journaliste trouvées (essai $i) — l'usine démarre."
+              exit 0
+            fi
+            sleep 180
+          done
+          echo "::warning::Journaliste muet après 3h — l'usine part en filet Groq (comportement d'avant)."
 
       - name: Setup Python
         uses: actions/setup-python@v5
