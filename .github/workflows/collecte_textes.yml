@@ -7,11 +7,11 @@ name: "📰 Collecte + textes d'articles (pour le Journaliste Claude) — cloud 
 on:
   schedule:
     # Retard GH mesuré 23-26/07 sur ce repo : matin +1h56 à +2h33, soir +1h07 à +1h18.
-    # Le Journaliste (routine Claude, à l'heure) passe à 08:15 et 20:15 UTC : chaque
-    # passage principal garde ≥3h30 de marge, le filet re-collecte plus frais si GH
-    # est rapide (sinon sans effet : le tampon du jour est déjà posé).
-    - cron: "10 4 * * *"   # 06h10 Paris (été) — principal MATIN
-    - cron: "40 5 * * *"   # 07h40 Paris (été) — filet MATIN
+    # Chaîne événementielle 26/07 : le Journaliste (routine Claude, à l'heure) passe à
+    # 06:30 et 20:30 UTC — chaque passage principal garde ≥3h45 de marge sur lui, le
+    # filet re-collecte plus frais si GH est rapide (sinon sans effet : tampon déjà posé).
+    - cron: "40 2 * * *"   # 04h40 Paris (été) — principal MATIN
+    - cron: "10 4 * * *"   # 06h10 Paris (été) — filet MATIN
     - cron: "10 16 * * *"  # 18h10 Paris (été) — principal SOIR
     - cron: "40 17 * * *"  # 19h40 Paris (été) — filet SOIR
   workflow_dispatch: {}

@@ -5,13 +5,15 @@ name: "📋 Menu de validation du jour (cloud gratuit)"
 # (le repo public ne peut pas observer les push du repo privé fc-pronox).
 
 on:
-  # PRIMAIRE : déclenché par la routine « Le Post du Jour » (Solution C) via
-  # `gh workflow run` dès qu'elle a fini → le menu se construit pile quand le
-  # contenu est prêt. Les crons ci-dessous sont un FILET DE SECOURS (idempotent)
-  # au cas où le déclenchement par la routine échoue (ou soir calme sans post).
+  # PRIMAIRE (chaîne événementielle 26/07) : déclenché dès la FIN de l'usine →
+  # menu construit pile quand le contenu est prêt, puis le mail part (workflow_run
+  # sur ce workflow). Les crons ci-dessous sont un FILET DE SECOURS (idempotent).
+  workflow_run:
+    workflows: ["🏭 Usine de contenu (actu + memes + produit + tipster) — cloud gratuit"]
+    types: [completed]
   schedule:
-    - cron: "30 9 * * *"    # 11h30 Paris — secours matin (après grille 11h + post)
-    - cron: "30 21 * * *"   # 23h30 Paris — secours soir (après grille-bilan 23h)
+    - cron: "30 11 * * *"   # 13h30 Paris — secours matin (bien après l'usine chaînée)
+    - cron: "30 22 * * *"   # 00h30 Paris — secours soir
   workflow_dispatch:
     inputs:
       dry_run:
@@ -29,6 +31,7 @@ concurrency:
 jobs:
   build-menu:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     timeout-minutes: 15
     steps:
       - name: Checkout fc-pronox (privé)
