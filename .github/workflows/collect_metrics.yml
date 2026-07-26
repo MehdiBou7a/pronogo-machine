@@ -47,6 +47,9 @@ jobs:
           python -X utf8 marketing/tools/collect_metrics.py
           echo "METRICS_RC=$?" >> "$GITHUB_ENV"
           set -e
+          # BOUCLE DE FEEDBACK (26/07) : top/flop des posts IG des 7 derniers jours
+          # → best_posts.json, lu par le Journaliste à chaque cycle. Best-effort.
+          python -X utf8 marketing/tools/best_posts.py || echo "::warning::best_posts KO (non bloquant)"
 
       - name: Committer l'historique (SI nouvelles lignes)
         run: |
@@ -57,6 +60,7 @@ jobs:
             echo "history.jsonl inchangé → relevé déjà fait (idempotent)."; exit 0
           fi
           git add marketing/reports/metrics/DASHBOARD.html 2>/dev/null || true
+          git add marketing/content_machine/best_posts.json 2>/dev/null || true
           git commit -m "metrics(cloud) relevé réseaux $(date -u +%Y-%m-%d) [skip ci]"
           for i in 1 2 3 4 5; do
             if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
