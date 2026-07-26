@@ -114,7 +114,8 @@ jobs:
             marketing/tools/injury_detect.py \
             marketing/tools/grille_jour.py \
             marketing/tools/goalardo_candidates.py \
-            marketing/tools/journal_tipster.py ; do
+            marketing/tools/journal_tipster.py \
+            marketing/tools/edition_run.py ; do
             echo "──────── $S ────────"
             if timeout -k 20 1800 python -X utf8 "$S"; then echo "✅ OK  $S"; else echo "❌ ÉCHEC  $S (code $?)"; fail=1; fi   # 30 min max PAR script : un déraillement ne tue plus les autres phases
           done
