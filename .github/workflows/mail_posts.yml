@@ -42,8 +42,9 @@ jobs:
         # envoie quand même ; le menu est reconstruit après coup par le Rédacteur.
         run: |
           DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
-          if [ -f "marketing/reports/routines/posts/.mailed_$DATE" ]; then
-            echo "Déjà mailé le $DATE → pas d'attente (le step suivant va skipper)."; exit 0
+          CYCLE=$([ "$(date -u +%H)" -lt 15 ] && echo matin || echo soir)
+          if [ -f "marketing/reports/routines/posts/.mailed_${DATE}_${CYCLE}" ]; then
+            echo "Déjà mailé ($CYCLE) le $DATE → pas d'attente (le step suivant va skipper)."; exit 0
           fi
           HOUR=$(date -u +%H)
           if [ "$HOUR" -lt 15 ]; then SINCE="$(date -u +%F)T00:00:00Z"; else SINCE="$(date -u +%F)T15:00:00Z"; fi
@@ -68,8 +69,12 @@ jobs:
         run: |
           DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          # marqueur PAR CYCLE (26/07) : avant, .mailed_$DATE journalier = le cycle
+          # du SOIR n'envoyait jamais de mail (posts du soir invisibles du fondateur)
+          CYCLE=$([ "$(date -u +%H)" -lt 15 ] && echo matin || echo soir)
+          echo "cycle=$CYCLE" >> "$GITHUB_OUTPUT"
           DIR="marketing/reports/routines/posts"
-          MARKER="$DIR/.mailed_$DATE"
+          MARKER="$DIR/.mailed_${DATE}_${CYCLE}"
           FORCE="${{ github.event.inputs.force }}"
 
           if [ -f "$MARKER" ] && [ "$FORCE" != "true" ]; then
@@ -116,7 +121,7 @@ jobs:
           server_port: 587
           username: ${{ secrets.BREVO_SMTP_USER }}
           password: ${{ secrets.BREVO_SMTP_KEY }}
-          subject: "📤 PronoGo — ${{ steps.news.outputs.total_count }} post(s) prêt(s) à valider"
+          subject: "📤 PronoGo (${{ steps.news.outputs.cycle }}) — ${{ steps.news.outputs.total_count }} post(s) prêt(s) à valider"
           to: ${{ secrets.ALERT_EMAIL }}
           reply_to: pronogo.dev@gmail.com
           from: "PronoGo Machine <pronogo.dev@gmail.com>"
@@ -127,7 +132,7 @@ jobs:
         if: steps.news.outputs.should_send == '1'
         run: |
           DATE="${{ steps.news.outputs.date }}"
-          MARKER="marketing/reports/routines/posts/.mailed_$DATE"
+          MARKER="marketing/reports/routines/posts/.mailed_${DATE}_${{ steps.news.outputs.cycle }}"
           echo "mailed at $(date -u +%FT%TZ)" > "$MARKER"
           git config user.name "PronoGo Cloud Mailer"
           git config user.email "pronogo.dev@gmail.com"
