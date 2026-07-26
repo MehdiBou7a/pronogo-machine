@@ -50,6 +50,8 @@ jobs:
           # BOUCLE DE FEEDBACK (26/07) : top/flop des posts IG des 7 derniers jours
           # → best_posts.json, lu par le Journaliste à chaque cycle. Best-effort.
           python -X utf8 marketing/tools/best_posts.py || echo "::warning::best_posts KO (non bloquant)"
+          # COMMENTAIRES (26/07) : collecte pour la routine Community manager
+          python -X utf8 marketing/tools/comments_pull.py || echo "::warning::comments_pull KO (non bloquant)"
 
       - name: Committer l'historique (SI nouvelles lignes)
         run: |
@@ -61,6 +63,7 @@ jobs:
           fi
           git add marketing/reports/metrics/DASHBOARD.html 2>/dev/null || true
           git add marketing/content_machine/best_posts.json 2>/dev/null || true
+          git add marketing/content_machine/commentaires.json 2>/dev/null || true
           git commit -m "metrics(cloud) relevé réseaux $(date -u +%Y-%m-%d) [skip ci]"
           for i in 1 2 3 4 5; do
             if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi

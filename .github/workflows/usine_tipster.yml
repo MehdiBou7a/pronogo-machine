@@ -17,7 +17,7 @@ on:
       competitions:
         description: "Compétitions (liste virgules)"
         type: string
-        default: "WC,CL,EL,ECL,FL1,PL,PD,BL1,SA"
+        default: "CL,EL,ECL,FL1,PL,PD,BL1,SA"
 
 permissions:
   contents: read
@@ -79,7 +79,7 @@ jobs:
         env:
           ADMIN_SYNC_TOKEN: ${{ secrets.ADMIN_SYNC_TOKEN }}
         run: |
-          COMPS="${{ github.event.inputs.competitions }}"; COMPS="${COMPS:-WC,CL,EL,ECL,FL1,PL,PD,BL1,SA}"
+          COMPS="${{ github.event.inputs.competitions }}"; COMPS="${COMPS:-CL,EL,ECL,FL1,PL,PD,BL1,SA}"
           mkdir -p marketing/tools/.api_cache
           echo '[]' > snap.json
           IFS=',' read -ra LIST <<< "$COMPS"
