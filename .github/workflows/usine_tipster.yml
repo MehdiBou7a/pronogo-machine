@@ -168,3 +168,18 @@ jobs:
             200|201|202) echo "✅ Rédacteur en chef déclenché." ;;
             *) echo "::warning::Déclenchement du Rédacteur KO (HTTP $code) — son cron de secours prendra le relais." ;;
           esac
+
+      - name: Enchaîner le menu (dispatch direct — filet du workflow_run)
+        # Constat test E2E 26/07 : le workflow_run usine→menu n'est PAS parti
+        # (alors que menu→mail fonctionne). Filet : dispatch explicite via GH_PAT
+        # (GITHUB_TOKEN ne déclenche pas d'autres workflows). Doublon sans risque :
+        # build_menu est idempotent + concurrency group build-menu.
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "(GH_PAT absent → workflow_run/crons secours)"; exit 0; fi
+          sleep 20
+          gh workflow run build_menu.yml --repo MehdiBou7a/pronogo-machine \
+            && echo "✅ menu dispatché" \
+            || echo "::warning::dispatch menu KO — workflow_run/crons secours restent"
