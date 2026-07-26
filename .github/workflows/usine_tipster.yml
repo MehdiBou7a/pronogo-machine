@@ -145,3 +145,26 @@ jobs:
             sleep $((i * 3))
           done
           echo "Push échoué après 5 essais — le prochain run rattrapera."
+
+      - name: Déclencher le Rédacteur en chef (QC Claude, chaîne événementielle 26/07)
+        # Fin d'usine → on réveille la routine Claude « Rédacteur en chef » via l'API
+        # claude.ai : elle dépublie les cartes défectueuses et réécrit les légendes,
+        # PENDANT que mail_posts attend son commit (max 60 min). Sans le secret
+        # CLAUDE_ROUTINES_TOKEN, son cron de secours (08:45/22:45 UTC) fait le QC.
+        if: success()
+        env:
+          CLAUDE_ROUTINES_TOKEN: ${{ secrets.CLAUDE_ROUTINES_TOKEN }}
+        run: |
+          if [ -z "$CLAUDE_ROUTINES_TOKEN" ]; then
+            echo "(secret CLAUDE_ROUTINES_TOKEN absent → QC par le cron de secours de la routine)"; exit 0
+          fi
+          code=$(curl -s -o /tmp/trig.json -w '%{http_code}' -X POST \
+            "https://api.anthropic.com/v1/code/triggers/trig_01VFXQqiHnafbyNG2azoRUcD/run" \
+            -H "Authorization: Bearer $CLAUDE_ROUTINES_TOKEN" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "Content-Type: application/json" -d '{}')
+          echo "HTTP $code"; head -c 400 /tmp/trig.json || true; echo
+          case "$code" in
+            200|201|202) echo "✅ Rédacteur en chef déclenché." ;;
+            *) echo "::warning::Déclenchement du Rédacteur KO (HTTP $code) — son cron de secours prendra le relais." ;;
+          esac

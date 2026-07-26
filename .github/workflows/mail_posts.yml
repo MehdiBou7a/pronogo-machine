@@ -31,7 +31,37 @@ jobs:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
           ref: main
-          fetch-depth: 1
+          fetch-depth: 50   # profondeur pour retrouver le commit QC « redacteur-en-chef » dans le log
+
+      - name: Attendre le QC du Rédacteur en chef (max 60 min, borné avant minuit Paris)
+        # Chaîne événementielle 26/07 : le Rédacteur (routine Claude) dépublie les
+        # cartes défectueuses juste après l'usine. Le mail attend son commit du CYCLE
+        # (matin = aujourd'hui ; soir = après 15:00 UTC) pour ne jamais pointer vers
+        # une page qui contient encore des cartes retirées. Jamais bloquant : au bout
+        # de 60 min (ou si minuit Paris approche — le comptage est en date Paris), on
+        # envoie quand même ; le menu est reconstruit après coup par le Rédacteur.
+        run: |
+          DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
+          if [ -f "marketing/reports/routines/posts/.mailed_$DATE" ]; then
+            echo "Déjà mailé le $DATE → pas d'attente (le step suivant va skipper)."; exit 0
+          fi
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" -lt 15 ]; then SINCE="$(date -u +%F)T00:00:00Z"; else SINCE="$(date -u +%F)T15:00:00Z"; fi
+          echo "Attente d'un commit 'redacteur-en-chef' postérieur à $SINCE"
+          for i in $(seq 1 20); do
+            git fetch -q origin main && git reset -q --hard origin/main
+            if [ -n "$(git log --since="$SINCE" --grep='redacteur-en-chef' --format=%h -1)" ]; then
+              echo "✅ QC du Rédacteur trouvé (essai $i) — envoi."
+              exit 0
+            fi
+            PH=$(TZ=Europe/Paris date +%H); PM=$(TZ=Europe/Paris date +%M)
+            if [ "$PH" = "23" ] && [ "$PM" -ge 40 ]; then
+              echo "::warning::Minuit Paris approche — envoi sans attendre le QC."
+              exit 0
+            fi
+            sleep 180
+          done
+          echo "::warning::Pas de commit QC après ~60 min — envoi quand même (page reconstruite après coup)."
 
       - name: Compter les posts du jour (+ anti-doublon)
         id: news
