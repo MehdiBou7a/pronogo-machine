@@ -149,28 +149,33 @@ jobs:
           done
           echo "Push échoué après 5 essais — le prochain run rattrapera."
 
-      - name: Déclencher le Rédacteur en chef (QC Claude, chaîne événementielle 26/07)
-        # Fin d'usine → on réveille la routine Claude « Rédacteur en chef » via l'API
-        # claude.ai : elle dépublie les cartes défectueuses et réécrit les légendes,
-        # PENDANT que mail_posts attend son commit (max 60 min). Sans le secret
-        # CLAUDE_ROUTINES_TOKEN, son cron de secours (08:45/22:45 UTC) fait le QC.
+      - name: QC Redacteur en chef (session Claude DANS l'usine — evenementiel 27/07)
+        # Les cartes viennent d'etre committees par CE job -> le QC tourne dans la
+        # seconde, authentifie par le jeton d'abonnement (claude setup-token,
+        # secret CLAUDE_CODE_OAUTH_TOKEN). L'ancien appel API routines (mauvaise
+        # porte : 401) est supprime. La routine claude.ai (08:45/10:45/20:45/22:45)
+        # reste le filet — no-op si le rapport du cycle existe deja.
         if: success()
         env:
-          CLAUDE_ROUTINES_TOKEN: ${{ secrets.CLAUDE_ROUTINES_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          if [ -z "$CLAUDE_ROUTINES_TOKEN" ]; then
-            echo "(secret CLAUDE_ROUTINES_TOKEN absent → QC par le cron de secours de la routine)"; exit 0
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "(secret CLAUDE_CODE_OAUTH_TOKEN absent -> QC par la routine de secours)"; exit 0
           fi
-          code=$(curl -s -o /tmp/trig.json -w '%{http_code}' -X POST \
-            "https://api.anthropic.com/v1/code/triggers/trig_01VFXQqiHnafbyNG2azoRUcD/run" \
-            -H "Authorization: Bearer $CLAUDE_ROUTINES_TOKEN" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "Content-Type: application/json" -d '{}')
-          echo "HTTP $code"; head -c 400 /tmp/trig.json || true; echo
-          case "$code" in
-            200|201|202) echo "✅ Rédacteur en chef déclenché." ;;
-            *) echo "::warning::Déclenchement du Rédacteur KO (HTTP $code) — son cron de secours prendra le relais." ;;
-          esac
+          git pull --rebase origin main || true
+          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || { echo "::warning::install claude-code KO -> routine de secours"; exit 0; }
+          cat > /tmp/qc_prompt.txt <<'QCEOF'
+          Tu es le REDACTEUR EN CHEF de PronoGo (app foot fantasy FR). Tu tournes DANS le workflow de l'usine, juste apres la fabrication des cartes : les posts du jour sont DEJA dans ce depot (checkout fc-pronox, branche main a jour). ZERO attente necessaire. Travaille sans trainer, la qualite prime.
+          ETAPE 0 : date=$(date -u +%F) ; cycle = matin si heure UTC < 15, sinon soir. Si _PILOTAGE/rapports/${date}_redacteur_en_chef_${cycle}.html existe deja -> QC deja fait, STOP en une ligne. Sinon : git config user.name "PronoGo Redacteur QC" && git config user.email "pronogo.dev@gmail.com".
+          OU REGARDER : cartes = marketing/reports/routines/posts/${date}_instagram_*.html (+ .png jumeau, REGARDE les images) ; legende publiable dans <div id="cap"> ; chaine du jour = marketing/content_machine/{infos_comprises,sujets_du_jour,selection_du_jour,posts_du_jour}.json ; memes = marketing/content_machine/a_valider/.
+          MISSION (traite d'abord les cartes marquees "PRIORITE QC", puis "LA UNE") :
+          1) CONTROLE DE LA CHAINE : grosse actu comprise mais SANS carte = anomalie a signaler en tete de rapport. Carte CITATION : le verbatim affiche doit etre EXACTEMENT celui de la fiche (un mot change = depublication). Carte CHIFFRE : le chiffre doit venir de la fiche.
+          2) LEGENDES : reecris chaque legende faible dans le <div id="cap"> : 1re ligne = HOOK autonome <= 90 caracteres, recit vivant, pro-France/PSG (on chambre les rivaux, JAMAIS la France ni le PSG), 1-2 emojis max, 3-5 hashtags, ACCENTS FRANCAIS OBLIGATOIRES. INTERDIT : chiffre/nom/fait absent de la fiche, mot RECORD, "selon X" hors rumeur, noms deformes.
+          3) GATE VISUEL = DEPUBLICATION : regarde chaque .png du jour UN PAR UN. Defauts eliminatoires : visage coupe / sujet sans visage / mauvaise personne / texte illisible ou recouvert / caractere casse / detourage rate / photo d'archive evidente. Carte defectueuse -> SUPPRIME .html ET .png (versions _instagram_ ET _facebook_). Doute de GOUT on garde, doute sur un DEFAUT liste on supprime. Chaque suppression listee dans le rapport.
+          4) RAPPORT : _PILOTAGE/rapports/${date}_redacteur_en_chef_${cycle}.html — HTML style autonome (fond #0d1117, cartes #161b22, or #e8b84a, zero jargon) : note /10 du cycle, anomalies, cartes depubliees (fichier + defaut), legendes AVANT->APRES, 3 conseils pour l'usine.
+          5) COMMIT + PUSH main : message exact "redacteur-en-chef: ${date} ${cycle} — QC + depublications + rapport [routine]" (le menu et le mail attendent ce mot-cle). Fichiers autorises UNIQUEMENT : les .html/.png de marketing/reports/routines/posts/ et ton rapport _PILOTAGE/rapports/. Ne touche JAMAIS marketing/tools/, lib/, functions/, les .json d'etat. Push refuse -> git pull --rebase origin main puis reessaie, 5 fois.
+          QCEOF
+          claude -p "$(cat /tmp/qc_prompt.txt)" --model sonnet --dangerously-skip-permissions             && echo "OK QC Redacteur termine (evenementiel)"             || echo "::warning::QC Claude KO -> la routine de secours prendra le relais"
 
       - name: Enchaîner le menu (dispatch direct — filet du workflow_run)
         # Constat test E2E 26/07 : le workflow_run usine→menu n'est PAS parti
