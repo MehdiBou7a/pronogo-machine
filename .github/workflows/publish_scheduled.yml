@@ -104,7 +104,7 @@ jobs:
         run: |
           git config user.name "PronoGo Cloud Publisher"
           git config user.email "pronogo.dev@gmail.com"
-          git add marketing/content_machine/FEEDBACK_LOG.json marketing/reports/routines/posts/.published.json \
+          git add marketing/content_machine/FEEDBACK_LOG.json marketing/content_machine/history.json marketing/reports/routines/posts/.published.json \
                   marketing/reports/routines/posts/.refused.json \
                   marketing/content_machine/CALENDRIER.json \
                   marketing/content_machine/CALENDRIER.html \
