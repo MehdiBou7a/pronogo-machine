@@ -41,12 +41,14 @@ jobs:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
           ref: main
-          fetch-depth: 300   # profondeur pour retrouver les commits du cycle
+          fetch-depth: 1   # ⚠️ depth 300 = >10 min (repo plein de médias) → run annulé
+                           # au 1er test 28/07 ; les commits du cycle se lisent via l'API.
 
       - name: Bilan de bout en bout du cycle
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          FCPRONOX_PAT: ${{ secrets.FCPRONOX_PAT }}
           MACHINE_REPO: ${{ github.repository }}
           CYCLE_INPUT: ${{ inputs.cycle || 'auto' }}
         run: |
@@ -103,22 +105,30 @@ jobs:
           (ok if mail else ecarts).append(
               "mail : parti %s" % (mail[0]["created_at"] if mail else "ABSENT — aucun email de validation envoyé ce cycle"))
 
-          # 4. COMMITS fc-pronox (Journaliste + QC Rédacteur)
-          log = subprocess.run(
-              ["git", "log", "--since", since.isoformat(), "--format=%s"],
-              capture_output=True, text=True).stdout
+          # 4. COMMITS fc-pronox (Journaliste + QC Rédacteur) — via API (checkout depth 1)
+          def fc_commits(path=None):
+              url = "repos/MehdiBou7a/fc-pronox/commits?per_page=100&since=" + since.isoformat()
+              if path:
+                  url += "&path=" + path
+              out = subprocess.run(["gh", "api", url], capture_output=True, text=True,
+                                   env={**os.environ, "GH_TOKEN": os.environ["FCPRONOX_PAT"]})
+              if out.returncode != 0:
+                  return None
+              return [c["commit"]["message"].splitlines()[0] for c in json.loads(out.stdout)]
+
+          msgs = fc_commits()
+          if msgs is None:
+              ecarts.append("commits fc-pronox : API illisible (PAT ?)")
+              msgs = []
           for prefix, quoi in [("journaliste-claude:", "Journaliste (fiches du cycle)"),
                                ("redacteur-en-chef:", "QC Rédacteur en chef")]:
-              if any(l.startswith(prefix) for l in log.splitlines()):
+              if any(m.startswith(prefix) for m in msgs):
                   ok.append(quoi + " : commit présent ✓")
               else:
                   ecarts.append(quoi + " : AUCUN commit dans la fenêtre du cycle")
 
           # 5. SÉLECTION (committée ce cycle + substance)
-          sel_log = subprocess.run(
-              ["git", "log", "--since", since.isoformat(), "--format=%H", "--",
-               "marketing/content_machine/selection_du_jour.json"],
-              capture_output=True, text=True).stdout.strip()
+          sel_log = fc_commits("marketing/content_machine/selection_du_jour.json") or []
           if not sel_log:
               ecarts.append("sélection : selection_du_jour.json PAS committée ce cycle (sélecteur pas passé ?)")
           else:
