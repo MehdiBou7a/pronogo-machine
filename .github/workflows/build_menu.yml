@@ -9,7 +9,11 @@ on:
   # menu construit pile quand le contenu est prêt, puis le mail part (workflow_run
   # sur ce workflow). Les crons ci-dessous sont un FILET DE SECOURS (idempotent).
   workflow_run:
-    workflows: ["🏭 Usine de contenu (actu + memes + produit + tipster) — cloud gratuit"]
+    # ⚠️ Le filtre `workflows:` est un MOTIF (glob GitHub) : les « + » du nom complet
+    # de l'usine étaient lus comme des quantificateurs → le chaînage n'a JAMAIS
+    # tiré (constaté 28/07 : 0 run workflow_run depuis le 26/07 ; tournage→short,
+    # sans « + », chaîne très bien). Motif préfixe = insensible aux caractères pièges.
+    workflows: ["🏭 Usine de contenu*"]
     types: [completed]
   schedule:
     - cron: "30 11 * * *"   # 13h30 Paris — secours matin (bien après l'usine chaînée)
