@@ -1,23 +1,39 @@
 name: "🩺 Témoin contenu (alerte si rien produit)"
-# FILET ANTI-PANNE SILENCIEUSE (2026-07-08). Le contenu est généré par des
-# routines Claude (pronogo.dev) que GitHub ne voit PAS. Si elles s'arrêtent
-# (budget de jetons épuisé, cron mort, erreur), la panne serait INVISIBLE.
-# Ce témoin (0 jeton, gratuit) vérifie chaque jour qu'un contenu du jour a bien
-# été committé dans fc-pronox ; sinon → mail d'alerte. Transforme toute panne
-# (quelle qu'en soit la cause) en alerte DÉTECTÉE.
+# TÉMOIN DE BOUT EN BOUT (v2 — 28/07, GO fondateur après 3 jours de pannes
+# silencieuses). Le v1 ne vérifiait qu'une chose (« du contenu existe ») ; les
+# vraies pannes étaient dans les COUTURES : chaînage usine→menu mort en silence
+# (filtre glob, 26-28/07), mail sauvé par le cron de secours, sélection maigre.
+# Le v2 vérifie les RÉSULTATS de chaque cycle, pas les étapes :
+#   1. l'usine a tourné (run success dans la fenêtre du cycle)
+#   2. le menu a tourné ET par le CHAÎNAGE (event workflow_run) — si c'est le
+#      cron de secours qui a sauvé la journée → ALERTE même si tout est vert
+#   3. le mail des posts est parti
+#   4. le Journaliste a committé ses fiches · le Rédacteur (QC) a committé
+#   5. selection_du_jour.json committée dans la fenêtre, ≥2 cartes, écartés motivés
+#   6. des posts datés du jour existent (contrôle v1 conservé)
+# Le moindre écart → UN mail d'alerte avec le diagnostic maillon par maillon.
+# 0 jeton, gratuit.
 
 on:
   schedule:
-    - cron: "40 10 * * *"   # 12h40 Paris (été) — après le run du matin (~11h + marge)
+    - cron: "15 9 * * *"    # 11h15 Paris (été) — bilan du cycle du MATIN
+    - cron: "15 22 * * *"   # 00h15 Paris (été) — bilan du cycle du SOIR
   workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Cycle à contrôler (auto = déduit de l'heure)"
+        type: choice
+        options: [auto, matin, soir]
+        default: auto
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   witness:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout fc-pronox (privé)
         uses: actions/checkout@v4
@@ -25,36 +41,129 @@ jobs:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
           ref: main
-          fetch-depth: 1
+          fetch-depth: 300   # profondeur pour retrouver les commits du cycle
 
-      - name: Chercher un contenu daté d'aujourd'hui
+      - name: Bilan de bout en bout du cycle
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACHINE_REPO: ${{ github.repository }}
+          CYCLE_INPUT: ${{ inputs.cycle || 'auto' }}
         run: |
-          DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
-          echo "date=$DATE" >> "$GITHUB_OUTPUT"
-          # Cherche un post/carte du jour dans les 2 emplacements possibles
-          # (JOUR/ canonique OU reports/routines/posts pendant la transition).
-          FOUND=""
-          [ -d "marketing/JOUR/$DATE" ] && \
-            FOUND=$(ls "marketing/JOUR/$DATE/" 2>/dev/null | grep -E "${DATE}_(x|instagram|facebook|tiktok)_" | head -1 || true)
-          if [ -z "$FOUND" ]; then
-            FOUND=$(ls marketing/reports/routines/posts/ 2>/dev/null | grep -E "^${DATE}_(x|instagram|facebook|tiktok)_" | head -1 || true)
-          fi
-          if [ -n "$FOUND" ]; then
-            echo "✅ Contenu du jour présent ($FOUND) → routine OK."
-            echo "alert=0" >> "$GITHUB_OUTPUT"
-          else
-            echo "⚠️ AUCUN post daté $DATE → la génération n'a probablement pas tourné."
-            echo "alert=1" >> "$GITHUB_OUTPUT"
-          fi
+          python3 - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import subprocess
 
-      - name: Alerte email si aucun contenu (observateur qui alerte)
+          UTC = dt.timezone.utc
+          now = dt.datetime.now(UTC)
+          cycle = os.environ.get("CYCLE_INPUT", "auto")
+          if cycle == "auto":
+              cycle = "matin" if 3 <= now.hour < 15 else "soir"
+          if cycle == "matin":
+              since = now.replace(hour=4, minute=30, second=0, microsecond=0)
+              if now.hour < 4:
+                  since -= dt.timedelta(days=1)
+          else:
+              since = now.replace(hour=17, minute=30, second=0, microsecond=0)
+              if now.hour < 15:      # contrôle après minuit UTC → fenêtre d'hier soir
+                  since -= dt.timedelta(days=1)
+          date_paris = (since + dt.timedelta(hours=2)).date().isoformat()  # été
+          repo = os.environ["MACHINE_REPO"]
+          ecarts, ok = [], []
+
+          def runs(wf):
+              out = subprocess.run(
+                  ["gh", "api", f"repos/{repo}/actions/workflows/{wf}/runs?per_page=30"],
+                  capture_output=True, text=True)
+              if out.returncode != 0:
+                  return []
+              rs = json.loads(out.stdout).get("workflow_runs", [])
+              return [r for r in rs
+                      if dt.datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")) >= since]
+
+          # 1. USINE
+          us = [r for r in runs("usine_tipster.yml") if r["conclusion"] == "success"]
+          (ok if us else ecarts).append(
+              "usine : run success %s" % (us[0]["created_at"] if us else "ABSENT dans la fenêtre — la production du cycle n'a pas tourné"))
+
+          # 2. MENU + CHAÎNAGE (la panne des 26-28/07 : secours vert, chaînage mort)
+          ms = [r for r in runs("build_menu.yml") if r["conclusion"] == "success"]
+          if not ms:
+              ecarts.append("menu : AUCUN run success — pas de page de validation ce cycle")
+          elif any(r["event"] == "workflow_run" for r in ms):
+              ok.append("menu : chaîné à la fin de l'usine (workflow_run) ✓")
+          else:
+              ecarts.append("menu : construit UNIQUEMENT par le cron de secours (%s) — le CHAÎNAGE usine→menu est mort, à réparer même si la journée est sauvée"
+                            % ", ".join(sorted({r["event"] for r in ms})))
+
+          # 3. MAIL
+          mail = [r for r in runs("mail_posts.yml") if r["conclusion"] == "success"]
+          (ok if mail else ecarts).append(
+              "mail : parti %s" % (mail[0]["created_at"] if mail else "ABSENT — aucun email de validation envoyé ce cycle"))
+
+          # 4. COMMITS fc-pronox (Journaliste + QC Rédacteur)
+          log = subprocess.run(
+              ["git", "log", "--since", since.isoformat(), "--format=%s"],
+              capture_output=True, text=True).stdout
+          for prefix, quoi in [("journaliste-claude:", "Journaliste (fiches du cycle)"),
+                               ("redacteur-en-chef:", "QC Rédacteur en chef")]:
+              if any(l.startswith(prefix) for l in log.splitlines()):
+                  ok.append(quoi + " : commit présent ✓")
+              else:
+                  ecarts.append(quoi + " : AUCUN commit dans la fenêtre du cycle")
+
+          # 5. SÉLECTION (committée ce cycle + substance)
+          sel_log = subprocess.run(
+              ["git", "log", "--since", since.isoformat(), "--format=%H", "--",
+               "marketing/content_machine/selection_du_jour.json"],
+              capture_output=True, text=True).stdout.strip()
+          if not sel_log:
+              ecarts.append("sélection : selection_du_jour.json PAS committée ce cycle (sélecteur pas passé ?)")
+          else:
+              try:
+                  sel = json.load(open("marketing/content_machine/selection_du_jour.json", encoding="utf-8"))
+                  n = len(sel.get("selection", []))
+                  sans_raison = [e for e in sel.get("ecartes", []) if not e.get("raison")]
+                  if n < 2:
+                      ecarts.append("sélection : %d carte(s) seulement — jour très maigre ou étage cassé, à regarder" % n)
+                  else:
+                      ok.append("sélection : %d cartes · %d écartés motivés ✓" % (n, len(sel.get("ecartes", []))))
+                  if sans_raison:
+                      ecarts.append("sélection : %d écarté(s) SANS raison journalisée" % len(sans_raison))
+              except Exception as e:
+                  ecarts.append("sélection : fichier illisible (%s)" % str(e)[:60])
+
+          # 6. POSTS DU JOUR (contrôle v1 conservé)
+          jour = "marketing/JOUR/%s" % date_paris
+          fichiers = os.listdir(jour) if os.path.isdir(jour) else []
+          if any(f.startswith(date_paris) for f in fichiers):
+              ok.append("posts : contenu daté %s présent ✓" % date_paris)
+          else:
+              ecarts.append("posts : AUCUN fichier daté %s dans marketing/JOUR/" % date_paris)
+
+          print("🩺 TÉMOIN BOUT-EN-BOUT — cycle %s du %s (fenêtre depuis %sZ)" % (cycle, date_paris, since.strftime("%H:%M")))
+          for l in ok:
+              print("  ✅ " + l)
+          for l in ecarts:
+              print("  ❌ " + l)
+
+          body = ["Bilan du cycle %s du %s — %d écart(s) détecté(s) :" % (cycle, date_paris, len(ecarts)), ""]
+          body += ["❌ " + l for l in ecarts] + [""] + ["✅ " + l for l in ok]
+          body += ["", "Runs : https://github.com/%s/actions" % repo]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write("alert=%d\n" % (1 if ecarts else 0))
+              f.write("n=%d\ncycle=%s\ndate=%s\n" % (len(ecarts), cycle, date_paris))
+              f.write("body<<TEMOIN_EOF\n" + "\n".join(body) + "\nTEMOIN_EOF\n")
+          PY
+
+      - name: Alerte email avec diagnostic maillon par maillon
         if: steps.check.outputs.alert == '1'
         env:
           BREVO_SMTP_KEY: ${{ secrets.BREVO_SMTP_KEY }}
           BREVO_SMTP_USER: ${{ secrets.BREVO_SMTP_USER }}
           ALERT_TO: ${{ secrets.ALERT_EMAIL }}
         run: |
-          SUBJECT="⚠️ PronoGo — AUCUN contenu généré aujourd'hui (${{ steps.check.outputs.date }})"
-          BODY="Le témoin n'a trouvé AUCUN post daté d'aujourd'hui dans fc-pronox. La routine de génération (Le Post du Jour, sur pronogo.dev) n'a probablement pas tourné. Causes probables : budget de jetons Claude épuisé, routine en pause/morte, ou erreur. Action : ouvre claude.ai/code/routines (compte pronogo.dev) et vérifie le dernier run + le budget. Run témoin : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          python _PILOTAGE/tools/ci_alert_email.py "$SUBJECT" "$BODY"
+          SUBJECT="🩺 PronoGo — ${{ steps.check.outputs.n }} écart(s) sur le cycle ${{ steps.check.outputs.cycle }} (${{ steps.check.outputs.date }})"
+          python _PILOTAGE/tools/ci_alert_email.py "$SUBJECT" "${{ steps.check.outputs.body }}"
