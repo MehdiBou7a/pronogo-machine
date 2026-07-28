@@ -107,7 +107,11 @@ jobs:
 
           # 4. COMMITS fc-pronox (Journaliste + QC Rédacteur) — via API (checkout depth 1)
           def fc_commits(path=None):
-              url = "repos/MehdiBou7a/fc-pronox/commits?per_page=100&since=" + since.isoformat()
+              # ⚠️ since.isoformat() finit en « +00:00 » : le + non encodé devient un
+              # ESPACE dans l'URL → GitHub décale la fenêtre et perd les 1ers commits
+              # (faux positif « Journaliste absent » au test du 28/07). Format Z.
+              url = ("repos/MehdiBou7a/fc-pronox/commits?per_page=100&since="
+                     + since.strftime("%Y-%m-%dT%H:%M:%SZ"))
               if path:
                   url += "&path=" + path
               out = subprocess.run(["gh", "api", url], capture_output=True, text=True,
