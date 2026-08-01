@@ -33,6 +33,36 @@ jobs:
           ref: main
           fetch-depth: 50   # profondeur pour retrouver le commit QC « redacteur-en-chef » dans le log
 
+      # ── DATE DU CYCLE (correctif fondateur 01/08) ────────────────────────
+      # Le cycle du SOIR se termine APRÈS minuit Paris (usine ~22h-23h40, menu
+      # chaîné juste après, cron de secours à 00h30). La date MURALE bascule
+      # alors sur J+1 → le menu cherchait les posts de DEMAIN et n'affichait
+      # RIEN : « le html se réinitialise à minuit, je ne vois jamais le retour
+      # du soir ». Règle : avant 05h00 Paris, on est ENCORE sur le cycle du
+      # soir de la veille. Toutes les étapes suivantes utilisent $CYCLE_DATE.
+      - name: Date du CYCLE (jamais la date murale)
+        run: |
+          PH=$(TZ=Europe/Paris date +%H); UH=$(date -u +%H)
+          if [ "$PH" -lt 5 ]; then
+            CD=$(TZ=Europe/Paris date -d 'yesterday' +%Y-%m-%d); CN=soir
+          else
+            CD=$(TZ=Europe/Paris date +%Y-%m-%d)
+            CN=$([ "$PH" -lt 17 ] && echo matin || echo soir)
+          fi
+          if [ "$CN" = "matin" ]; then
+            SINCE="$(date -u +%F)T00:00:00Z"
+          elif [ "$UH" -lt 15 ]; then
+            SINCE="$(date -u -d yesterday +%F)T15:00:00Z"
+          else
+            SINCE="$(date -u +%F)T15:00:00Z"
+          fi
+          {
+            echo "CYCLE_DATE=$CD"
+            echo "CYCLE_NAME=$CN"
+            echo "CYCLE_SINCE=$SINCE"
+          } >> "$GITHUB_ENV"
+          echo "Cycle : $CN du $CD (produit depuis $SINCE)"
+
       - name: Attendre le QC du Rédacteur en chef (max 60 min, borné avant minuit Paris)
         # Chaîne événementielle 26/07 : le Rédacteur (routine Claude) dépublie les
         # cartes défectueuses juste après l'usine. Le mail attend son commit du CYCLE
@@ -41,13 +71,12 @@ jobs:
         # de 60 min (ou si minuit Paris approche — le comptage est en date Paris), on
         # envoie quand même ; le menu est reconstruit après coup par le Rédacteur.
         run: |
-          DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
-          CYCLE=$([ "$(date -u +%H)" -lt 15 ] && echo matin || echo soir)
+          DATE="$CYCLE_DATE"
+          CYCLE="$CYCLE_NAME"
           if [ -f "marketing/reports/routines/posts/.mailed_${DATE}_${CYCLE}" ]; then
             echo "Déjà mailé ($CYCLE) le $DATE → pas d'attente (le step suivant va skipper)."; exit 0
           fi
-          HOUR=$(date -u +%H)
-          if [ "$HOUR" -lt 15 ]; then SINCE="$(date -u +%F)T00:00:00Z"; else SINCE="$(date -u +%F)T15:00:00Z"; fi
+          SINCE="$CYCLE_SINCE"
           echo "Attente d'un commit 'redacteur-en-chef' postérieur à $SINCE"
           for i in $(seq 1 20); do
             git fetch -q origin main && git reset -q --hard origin/main
@@ -67,11 +96,11 @@ jobs:
       - name: Compter les posts du jour (+ anti-doublon)
         id: news
         run: |
-          DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
+          DATE="$CYCLE_DATE"
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
           # marqueur PAR CYCLE (26/07) : avant, .mailed_$DATE journalier = le cycle
           # du SOIR n'envoyait jamais de mail (posts du soir invisibles du fondateur)
-          CYCLE=$([ "$(date -u +%H)" -lt 15 ] && echo matin || echo soir)
+          CYCLE="$CYCLE_NAME"
           echo "cycle=$CYCLE" >> "$GITHUB_OUTPUT"
           DIR="marketing/reports/routines/posts"
           MARKER="$DIR/.mailed_${DATE}_${CYCLE}"
@@ -84,12 +113,18 @@ jobs:
 
           # Mail = UN seul lien vers la page unifiée (IG/FB + X/TikTok + vidéo + grille).
           # Plus de pièces jointes : la page montre tout. On compte juste pour le sujet.
-          COUNT=0
-          for p in "$DIR/${DATE}"_*.html; do
-            [ -f "$p" ] || continue
-            case "$(basename "$p")" in .*) continue ;; esac
-            COUNT=$((COUNT + 1))
-          done
+          # COMPTE RÉEL (correctif fondateur 01/08 : « les chiffres 48 / 522 /
+          # 28 posts prêts sont faux »). Avant : on comptait TOUS les .html du
+          # jour → chaque post était compté autant de fois qu'il a de variantes
+          # de plateforme (instagram + facebook + x + tiktok…), ET le mail du
+          # SOIR recomptait tout le matin. Désormais : un post = un SLUG unique,
+          # et seulement ceux AJOUTÉS PENDANT CE CYCLE (git, pas l'horloge).
+          COUNT=$(git log --since="$CYCLE_SINCE" --diff-filter=A --name-only --format= -- "$DIR" \
+            | grep -E "^${DIR}/${DATE}_[a-z0-9]+_.+\.html$" \
+            | sed -E "s#^${DIR}/${DATE}_[a-z0-9]+_##; s#\.html$##" \
+            | sort -u | wc -l | tr -d ' ')
+          [ -z "$COUNT" ] && COUNT=0
+          echo "Posts distincts produits pendant le cycle $CYCLE : $COUNT"
 
           if [ "$COUNT" = "0" ]; then
             echo "Aucun post daté du $DATE → rien à envoyer."
