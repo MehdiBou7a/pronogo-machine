@@ -46,6 +46,36 @@ jobs:
           ref: main
           fetch-depth: 50   # profondeur pour retrouver le commit QC « redacteur-en-chef »
 
+      # ── DATE DU CYCLE (correctif fondateur 01/08) ────────────────────────
+      # Le cycle du SOIR se termine APRÈS minuit Paris (usine ~22h-23h40, menu
+      # chaîné juste après, cron de secours à 00h30). La date MURALE bascule
+      # alors sur J+1 → le menu cherchait les posts de DEMAIN et n'affichait
+      # RIEN : « le html se réinitialise à minuit, je ne vois jamais le retour
+      # du soir ». Règle : avant 05h00 Paris, on est ENCORE sur le cycle du
+      # soir de la veille. Toutes les étapes suivantes utilisent $CYCLE_DATE.
+      - name: Date du CYCLE (jamais la date murale)
+        run: |
+          PH=$(TZ=Europe/Paris date +%H); UH=$(date -u +%H)
+          if [ "$PH" -lt 5 ]; then
+            CD=$(TZ=Europe/Paris date -d 'yesterday' +%Y-%m-%d); CN=soir
+          else
+            CD=$(TZ=Europe/Paris date +%Y-%m-%d)
+            CN=$([ "$PH" -lt 17 ] && echo matin || echo soir)
+          fi
+          if [ "$CN" = "matin" ]; then
+            SINCE="$(date -u +%F)T00:00:00Z"
+          elif [ "$UH" -lt 15 ]; then
+            SINCE="$(date -u -d yesterday +%F)T15:00:00Z"
+          else
+            SINCE="$(date -u +%F)T15:00:00Z"
+          fi
+          {
+            echo "CYCLE_DATE=$CD"
+            echo "CYCLE_NAME=$CN"
+            echo "CYCLE_SINCE=$SINCE"
+          } >> "$GITHUB_ENV"
+          echo "Cycle : $CN du $CD (produit depuis $SINCE)"
+
       - name: Attendre le QC du Rédacteur en chef (max 60 min — la page ne montre jamais l'état pré-contrôle)
         # Ordre de chaîne 26/07 : usine → Rédacteur (dépublications) → menu → mail.
         # Le menu attend le commit « redacteur-en-chef » du cycle pour ne jamais
@@ -53,12 +83,11 @@ jobs:
         # mailé (rejeu tardif) ou si minuit Paris approche. Les dépublications
         # tardives restent couvertes par le dispatch best-effort du Rédacteur.
         run: |
-          DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
-          if [ -f "marketing/reports/routines/posts/.mailed_$DATE" ]; then
+          DATE="$CYCLE_DATE"
+          if [ -f "marketing/reports/routines/posts/.mailed_${DATE}_${CYCLE_NAME}" ]; then
             echo "Déjà mailé le $DATE → pas d'attente (reconstruction directe)."; exit 0
           fi
-          HOUR=$(date -u +%H)
-          if [ "$HOUR" -lt 15 ]; then SINCE="$(date -u +%F)T00:00:00Z"; else SINCE="$(date -u +%F)T15:00:00Z"; fi
+          SINCE="$CYCLE_SINCE"
           echo "Attente d'un commit 'redacteur-en-chef' postérieur à $SINCE"
           for i in $(seq 1 20); do
             git fetch -q origin main && git reset -q --hard origin/main
@@ -97,7 +126,7 @@ jobs:
         run: |
           ARGS=""
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="--dry"; fi
-          python -X utf8 marketing/tools/build_approval_menu.py $ARGS
+          python -X utf8 marketing/tools/build_approval_menu.py --date "$CYCLE_DATE" $ARGS
 
       # BOUCLAGE : ramène les retours du fondateur (décisions + « pourquoi ») dans
       # FEEDBACK_LOG.json → les routines de contenu liront `feedback.py digest`.
@@ -114,7 +143,7 @@ jobs:
       - name: Assembler le dossier du jour (JOUR/) + commit fc-pronox
         if: github.event.inputs.dry_run != 'true'
         run: |
-          DATE=$(TZ=Europe/Paris date +%Y-%m-%d)
+          DATE="$CYCLE_DATE"
           python -X utf8 marketing/tools/build_jour.py --date "$DATE" || { echo "build_jour a échoué (non bloquant)"; exit 0; }
           git config user.name "PronoGo Cloud Jour"
           git config user.email "pronogo.dev@gmail.com"
