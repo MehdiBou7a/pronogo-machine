@@ -156,7 +156,13 @@ jobs:
                   sel = json.load(open("marketing/content_machine/selection_du_jour.json", encoding="utf-8"))
                   n = len(sel.get("selection", []))
                   sans_raison = [e for e in sel.get("ecartes", []) if not e.get("raison")]
-                  if n < 2:
+                  # VEILLE DU SOIR (refonte fondateur 02/08) : le cycle du soir ne
+                  # fabrique QUE la grosse info du jour, une carte au maximum, et rien
+                  # du tout si rien ne franchit la barre. Y crier « jour très maigre »
+                  # serait un faux positif systématique — c'est le comportement voulu.
+                  if cycle == "soir":
+                      ok.append("veille du soir : %d carte(s) — normal (une carte max, zéro si rien ne passe la barre) ✓" % n)
+                  elif n < 2:
                       ecarts.append("sélection : %d carte(s) seulement — jour très maigre ou étage cassé, à regarder" % n)
                   else:
                       ok.append("sélection : %d cartes · %d écartés motivés ✓" % (n, len(sel.get("ecartes", []))))
@@ -170,6 +176,8 @@ jobs:
           fichiers = os.listdir(jour) if os.path.isdir(jour) else []
           if any(f.startswith(date_paris) for f in fichiers):
               ok.append("posts : contenu daté %s présent ✓" % date_paris)
+          elif cycle == "soir":
+              ok.append("veille du soir : aucun post — rien ne franchissait la barre, c'est un résultat, pas une panne ✓")
           else:
               ecarts.append("posts : AUCUN fichier daté %s dans marketing/JOUR/" % date_paris)
 
