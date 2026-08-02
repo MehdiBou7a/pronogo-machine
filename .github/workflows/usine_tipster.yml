@@ -93,29 +93,38 @@ jobs:
           mv snap.json marketing/tools/.api_cache/wc_matches_snapshot.json
           echo "Snapshot: $(jq 'length' marketing/tools/.api_cache/wc_matches_snapshot.json) matchs."
 
+      # ── CYCLE (correctif fondateur 02/08) ────────────────────────────────
+      # Le soir n'est plus une deuxieme journee complete. Constat mesure sur le
+      # cycle du 01/08 : memes 15 scripts que le matin, 6 posts distincts, mail
+      # a 23h25 Paris puis un second a 01h29 — le fondateur les lisait perimes le
+      # lendemain. Le soir devient une VEILLE : la grosse info du jour, une carte
+      # maximum, et rien du tout si rien ne franchit la barre.
+      - name: Quel cycle (matin complet ou veille du soir)
+        run: |
+          if [ "$(date -u +%H)" -lt 15 ]; then
+            echo 'PRONOGO_VEILLE=0' >> "$GITHUB_ENV"; echo 'Cycle MATIN — production complete.'
+          else
+            echo 'PRONOGO_VEILLE=1' >> "$GITHUB_ENV"; echo 'Cycle SOIR — VEILLE : la grosse info du jour, une carte maximum.'
+          fi
+
       - name: Lancer l'usine (récap ✅/❌ par script, non bloquant mais VISIBLE)
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           FAL_KEY: ${{ secrets.FAL_KEY }}   # fonds Flux (10 € fondateur) — absent/épuisé → fallback bibliothèque, 0 crash
           PYTHONUNBUFFERED: "1"   # logs en DIRECT (pas de buffer perdu si un script traîne/est tué)
+          PRONOGO_VEILLE: ${{ env.PRONOGO_VEILLE }}   # 1 = veille du soir (une carte max, pas de mercato du jour)
         run: |
           fail=0
-          for S in \
-            marketing/tools/rss_ingest.py \
-            marketing/tools/comprehend.py \
-            marketing/tools/consolidate.py \
-            marketing/tools/select_edito.py \
-            marketing/tools/accents_fix.py \
-            marketing/tools/actu_run.py \
-            marketing/tools/scores_run.py \
-            marketing/tools/flop_run.py \
-            marketing/tools/meme_run.py \
-            marketing/tools/produit_run.py \
-            marketing/tools/injury_detect.py \
-            marketing/tools/grille_jour.py \
-            marketing/tools/goalardo_candidates.py \
-            marketing/tools/journal_tipster.py \
-            marketing/tools/edition_run.py ; do
+          # Le SOIR ne lance que la chaine actu : memes, flop, produit, grille,
+          # blessures, journal tipster et edition sont des formats de recapitulatif
+          # ou d'animation — ils appartiennent au matin. carnet_sweep clot le cycle :
+          # tout sujet selectionne dont la carte n'est jamais sortie part au carnet
+          # de reports au lieu d'etre perdu (la memoire 30 j le marque des la
+          # selection, pas a la publication).
+          BASE="marketing/tools/rss_ingest.py marketing/tools/comprehend.py marketing/tools/consolidate.py marketing/tools/select_edito.py marketing/tools/accents_fix.py marketing/tools/actu_run.py"
+          SUITE="marketing/tools/scores_run.py marketing/tools/flop_run.py marketing/tools/meme_run.py marketing/tools/produit_run.py marketing/tools/injury_detect.py marketing/tools/grille_jour.py marketing/tools/goalardo_candidates.py marketing/tools/journal_tipster.py marketing/tools/edition_run.py"
+          if [ "$PRONOGO_VEILLE" = "1" ]; then SCRIPTS="$BASE marketing/tools/carnet_sweep.py"; else SCRIPTS="$BASE $SUITE marketing/tools/carnet_sweep.py"; fi
+          for S in $SCRIPTS ; do
             echo "──────── $S ────────"
             if timeout -k 20 1800 python -X utf8 "$S"; then echo "✅ OK  $S"; else echo "❌ ÉCHEC  $S (code $?)"; fail=1; fi   # 30 min max PAR script : un déraillement ne tue plus les autres phases
           done
@@ -132,6 +141,7 @@ jobs:
                   marketing/content_machine/a_valider/ \
                   marketing/content_machine/*.json \
                   marketing/content_machine/GOALARDO_RDV.json \
+                  marketing/content_machine/carnet_reports.json \
                   marketing/photo_staging/ \
                   marketing/assets/bg_library/ \
                   _PILOTAGE/tipster/ 2>/dev/null || true
