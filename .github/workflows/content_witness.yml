@@ -16,7 +16,7 @@ name: "🩺 Témoin contenu (alerte si rien produit)"
 
 on:
   schedule:
-    - cron: "15 9 * * *"    # 11h15 Paris (été) — bilan du cycle du MATIN
+    - cron: "30 12 * * *"   # 14h30 Paris — APRÈS la fin réelle de l'usine du matin (mesurée ~13h16 Paris)
     - cron: "15 22 * * *"   # 00h15 Paris (été) — bilan du cycle du SOIR
   workflow_dispatch:
     inputs:
@@ -73,7 +73,7 @@ jobs:
                   since -= dt.timedelta(days=1)
           date_paris = (since + dt.timedelta(hours=2)).date().isoformat()  # été
           repo = os.environ["MACHINE_REPO"]
-          ecarts, ok = [], []
+          ecarts, ok, encore = [], [], []
 
           def runs(wf):
               out = subprocess.run(
@@ -85,15 +85,28 @@ jobs:
               return [r for r in rs
                       if dt.datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")) >= since]
 
-          # 1. USINE
-          us = [r for r in runs("usine_tipster.yml") if r["conclusion"] == "success"]
-          (ok if us else ecarts).append(
-              "usine : run success %s" % (us[0]["created_at"] if us else "ABSENT dans la fenêtre — la production du cycle n'a pas tourné"))
+          # 1. USINE — ⚠️ mesuré le 02/08 : l'usine du MATIN dure ~3h35
+          # (07:41 → 11:16 UTC) et celle du soir ~1h30. Le témoin passait AVANT
+          # sa fin et annonçait « ABSENT » alors qu'elle tournait : faux positif
+          # systématique. On distingue désormais EN COURS (pas une panne) de
+          # ABSENT (vraie panne), et le bilan est reporté si tout tourne encore.
+          all_us = runs("usine_tipster.yml")
+          us = [r for r in all_us if r["conclusion"] == "success"]
+          running = [r for r in all_us if r["status"] != "completed"]
+          if us:
+              ok.append("usine : run success %s" % us[0]["created_at"])
+          elif running:
+              encore.append("usine : EN COURS depuis %s (pas une panne — bilan "
+                            "prématuré)" % running[0]["created_at"])
+          else:
+              ecarts.append("usine : ABSENT dans la fenêtre — la production du "
+                            "cycle n'a pas tourné")
 
           # 2. MENU + CHAÎNAGE (la panne des 26-28/07 : secours vert, chaînage mort)
           ms = [r for r in runs("build_menu.yml") if r["conclusion"] == "success"]
           if not ms:
-              ecarts.append("menu : AUCUN run success — pas de page de validation ce cycle")
+              (encore if encore else ecarts).append(
+                  "menu : AUCUN run success — pas de page de validation ce cycle")
           elif any(r["event"] == "workflow_run" for r in ms):
               ok.append("menu : chaîné à la fin de l'usine (workflow_run) ✓")
           else:
@@ -102,8 +115,11 @@ jobs:
 
           # 3. MAIL
           mail = [r for r in runs("mail_posts.yml") if r["conclusion"] == "success"]
-          (ok if mail else ecarts).append(
-              "mail : parti %s" % (mail[0]["created_at"] if mail else "ABSENT — aucun email de validation envoyé ce cycle"))
+          if mail:
+              ok.append("mail : parti %s" % mail[0]["created_at"])
+          else:
+              (encore if encore else ecarts).append(
+                  "mail : ABSENT — aucun email de validation envoyé ce cycle")
 
           # 4. COMMITS fc-pronox (Journaliste + QC Rédacteur) — via API (checkout depth 1)
           def fc_commits(path=None):
@@ -157,6 +173,20 @@ jobs:
           else:
               ecarts.append("posts : AUCUN fichier daté %s dans marketing/JOUR/" % date_paris)
 
+          if encore:
+              # la chaîne n'a pas fini : un bilan maintenant serait un faux
+              # positif. On le DIT (visible dans le run) et on n'alerte pas.
+              print("⏳ TÉMOIN — chaîne ENCORE EN COURS, bilan reporté :")
+              for l in encore:
+                  print("  ⏳ " + l)
+              for l in ok:
+                  print("  ✅ " + l)
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+                  f.write("alert=0" + chr(10) + "n=0" + chr(10)
+                          + ("cycle=%s" % cycle) + chr(10)
+                          + ("date=%s" % date_paris) + chr(10)
+                          + "body=chaine en cours" + chr(10))
+              raise SystemExit(0)
           print("🩺 TÉMOIN BOUT-EN-BOUT — cycle %s du %s (fenêtre depuis %sZ)" % (cycle, date_paris, since.strftime("%H:%M")))
           for l in ok:
               print("  ✅ " + l)
