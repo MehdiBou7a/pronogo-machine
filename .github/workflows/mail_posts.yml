@@ -175,6 +175,6 @@ jobs:
           git commit -m "state(mail) marqueur anti-doublon $DATE [skip ci]" || { echo "rien à committer"; exit 0; }
           for i in 1 2 3; do
             if git push origin HEAD:main; then exit 0; fi
-            git pull --rebase origin main; sleep $((i * 3))
+            git pull --rebase --autostash -X theirs origin main || git rebase --abort || true; sleep $((i * 3))
           done
-          echo "Push marqueur échoué — au pire un 2e mail partira, sans gravité."
+          echo "::warning::Push marqueur échoué — au pire un 2e mail partira. Bénin mais VISIBLE désormais."

@@ -105,7 +105,7 @@ jobs:
           git commit -m "short($(date -u +%Y-%m-%d)) rush monté → file de validation [cloud]"
           for i in 1 2 3 4 5; do
             if git push origin HEAD:main; then echo "Push OK."; exit 0; fi
-            git pull --rebase origin main; sleep $((i * 3))
+            git pull --rebase --autostash -X theirs origin main || git rebase --abort || true; sleep $((i * 3))
           done
           echo "::error::Push impossible après 5 tentatives"
           exit 1
