@@ -115,4 +115,4 @@ jobs:
             if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
             git pull --rebase origin main; sleep $((i * 3))
           done
-          echo "Push échoué après 5 essais — le prochain passage rattrapera."
+          echo "::error::Push de l'état de publication échoué — le prochain passage risque de REPUBLIER (doublon public). Rouge volontaire." ; exit 1

@@ -68,4 +68,4 @@ jobs:
             if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
             git pull --rebase --autostash origin main; sleep $((i * 3))
           done
-          echo "Push échoué après 5 essais."
+          echo "::warning::Push collecte échoué — re-collecté au prochain run. Visible désormais."

@@ -157,7 +157,7 @@ jobs:
             git pull --rebase --autostash -X theirs origin main || git rebase --abort || true
             sleep $((i * 3))
           done
-          echo "Push échoué après 5 essais — le prochain run rattrapera."
+          echo "::error::Push échoué après 5 essais — la production du cycle N'EST PAS sur main. Un run VERT aurait caché cette perte (motif de l'incident du 21/07)." ; exit 1
 
       - name: QC Redacteur en chef (session Claude DANS l'usine — evenementiel 27/07)
         # Les cartes viennent d'etre committees par CE job -> le QC tourne dans la

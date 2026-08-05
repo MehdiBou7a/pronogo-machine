@@ -69,7 +69,7 @@ jobs:
             if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
             git pull --rebase origin main; sleep $((i * 3))
           done
-          echo "Push échoué après 5 essais — le prochain run rattrapera (append-only)."
+          echo "::warning::Push métriques échoué — append-only, le prochain run rattrape. Visible désormais."
 
       - name: Rejouer l'échec réseau éventuel (observateur qui alerte)
         if: env.METRICS_RC != '0'
