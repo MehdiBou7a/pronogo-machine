@@ -59,17 +59,36 @@ jobs:
           fi
 
       - name: Alerte email si échec (observateur qui alerte)
+        # v2 (08/08) : l'envoi passait par _PILOTAGE/tools/ci_alert_email.py, un
+        # script qui vit DANS fc-pronox — si le checkout (1er step) échoue (PAT
+        # mort), l'alerte était impossible. Envoi autonome désormais.
         if: failure()
-        env:
-          BREVO_SMTP_KEY: ${{ secrets.BREVO_SMTP_KEY }}
-          BREVO_SMTP_USER: ${{ secrets.BREVO_SMTP_USER }}
-          ALERT_TO: ${{ secrets.ALERT_EMAIL }}
-          IS_DRILL: ${{ github.event.inputs.simulate_failure }}
+        id: drill
         run: |
           SUBJECT="⚠️ PronoGo — ÉCHEC refresh token Meta (publi cloud en danger)"
-          BODY="Le refresh mensuel du token long-lived Meta a échoué. Risque : à l'expiration (~60j) la publication IG/FB casse en silence. Action : relancer refresh_meta_token en dry_run pour voir l'erreur, ou régénérer un token à la main (Graph API Explorer). Run : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          if [ "$IS_DRILL" = "true" ]; then
+          if [ "${{ github.event.inputs.simulate_failure }}" = "true" ]; then
             SUBJECT="[🔥 EXERCICE — TEST] $SUBJECT"
-            BODY="✅ EXERCICE volontaire : le refresh n'a PAS vraiment échoué, on vérifie juste que l'alerte arrive. --- $BODY"
           fi
-          python _PILOTAGE/tools/ci_alert_email.py "$SUBJECT" "$BODY"
+          echo "subject=$SUBJECT" >> "$GITHUB_OUTPUT"
+
+      - name: Envoi de l'alerte (Brevo direct, zéro dépendance fc-pronox)
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-relay.brevo.com
+          server_port: 587
+          username: ${{ secrets.BREVO_SMTP_USER }}
+          password: ${{ secrets.BREVO_SMTP_KEY }}
+          subject: ${{ steps.drill.outputs.subject }}
+          to: ${{ secrets.ALERT_EMAIL }}
+          reply_to: pronogo.dev@gmail.com
+          from: "PronoGo Machine <pronogo.dev@gmail.com>"
+          body: |
+            Le refresh mensuel du token long-lived Meta a échoué (ou EXERCICE si l'objet le dit).
+            Risque : à l'expiration (~60j) la publication IG/FB casse en silence.
+            Action : relancer refresh_meta_token en dry_run pour voir l'erreur, ou
+            régénérer un token à la main (Graph API Explorer).
+            Si le log montre « could not read Username for 'https://github.com' » :
+            c'est le jeton FCPRONOX_PAT qui est mort → github.com/settings/tokens
+            → régénérer (scope repo) → pronogo-machine/settings/secrets/actions → FCPRONOX_PAT.
+            Run : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
