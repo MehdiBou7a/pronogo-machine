@@ -35,7 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout fc-pronox (privé)
+      - name: Checkout fc-pronox (privé) — NON-FATAL
+        id: checkout_fc
+        # ⚠️ v3 (08/08) : ce checkout était le 1er step ET fatal → quand le PAT
+        # est mort (panne des 07-08/08), le témoin mourait AVANT tout diagnostic
+        # et la panne totale était MUETTE — l'inverse exact de sa raison d'être.
+        # Il est désormais non-fatal : son échec devient le PREMIER écart alerté.
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: MehdiBou7a/fc-pronox
@@ -51,6 +57,7 @@ jobs:
           FCPRONOX_PAT: ${{ secrets.FCPRONOX_PAT }}
           MACHINE_REPO: ${{ github.repository }}
           CYCLE_INPUT: ${{ inputs.cycle || 'auto' }}
+          CHECKOUT_OK: ${{ steps.checkout_fc.outcome }}
         run: |
           python3 - <<'PY'
           import datetime as dt
@@ -74,6 +81,17 @@ jobs:
           date_paris = (since + dt.timedelta(hours=2)).date().isoformat()  # été
           repo = os.environ["MACHINE_REPO"]
           ecarts, ok, encore = [], [], []
+
+          # 0. LE DÉPÔT LUI-MÊME (leçon 07-08/08 : PAT mort → checkout fatal →
+          # témoin muet pendant toute la panne). Un checkout refusé est TOUJOURS
+          # un écart alerté, même si la chaîne semble « encore en cours ».
+          pat_mort = os.environ.get("CHECKOUT_OK") != "success"
+          if pat_mort:
+              ecarts.append(
+                  "fc-pronox INACCESSIBLE (checkout refusé) — jeton FCPRONOX_PAT "
+                  "mort/expiré ? Réparer : github.com/settings/tokens → régénérer "
+                  "(scope repo) → coller dans pronogo-machine/settings/secrets/"
+                  "actions → FCPRONOX_PAT. La machine repart seule ensuite.")
 
           def runs(wf):
               out = subprocess.run(
@@ -181,9 +199,10 @@ jobs:
           else:
               ecarts.append("posts : AUCUN fichier daté %s dans marketing/JOUR/" % date_paris)
 
-          if encore:
+          if encore and not pat_mort:
               # la chaîne n'a pas fini : un bilan maintenant serait un faux
               # positif. On le DIT (visible dans le run) et on n'alerte pas.
+              # (SAUF si le PAT est mort : là, rien ne finira jamais → on alerte.)
               print("⏳ TÉMOIN — chaîne ENCORE EN COURS, bilan reporté :")
               for l in encore:
                   print("  ⏳ " + l)
@@ -202,7 +221,8 @@ jobs:
               print("  ❌ " + l)
 
           body = ["Bilan du cycle %s du %s — %d écart(s) détecté(s) :" % (cycle, date_paris, len(ecarts)), ""]
-          body += ["❌ " + l for l in ecarts] + [""] + ["✅ " + l for l in ok]
+          body += ["❌ " + l for l in ecarts] + ["⏳ " + l for l in encore]
+          body += [""] + ["✅ " + l for l in ok]
           body += ["", "Runs : https://github.com/%s/actions" % repo]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write("alert=%d\n" % (1 if ecarts else 0))
@@ -211,11 +231,30 @@ jobs:
           PY
 
       - name: Alerte email avec diagnostic maillon par maillon
+        # v3 (08/08) : l'ancien envoi passait par _PILOTAGE/tools/ci_alert_email.py
+        # — un script qui vit DANS fc-pronox : checkout mort = alerte impossible.
+        # L'envoi est désormais autonome (Brevo direct, aucun fichier requis).
         if: steps.check.outputs.alert == '1'
-        env:
-          BREVO_SMTP_KEY: ${{ secrets.BREVO_SMTP_KEY }}
-          BREVO_SMTP_USER: ${{ secrets.BREVO_SMTP_USER }}
-          ALERT_TO: ${{ secrets.ALERT_EMAIL }}
-        run: |
-          SUBJECT="🩺 PronoGo — ${{ steps.check.outputs.n }} écart(s) sur le cycle ${{ steps.check.outputs.cycle }} (${{ steps.check.outputs.date }})"
-          python _PILOTAGE/tools/ci_alert_email.py "$SUBJECT" "${{ steps.check.outputs.body }}"
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-relay.brevo.com
+          server_port: 587
+          username: ${{ secrets.BREVO_SMTP_USER }}
+          password: ${{ secrets.BREVO_SMTP_KEY }}
+          subject: "🩺 PronoGo — ${{ steps.check.outputs.n }} écart(s) sur le cycle ${{ steps.check.outputs.cycle }} (${{ steps.check.outputs.date }})"
+          to: ${{ secrets.ALERT_EMAIL }}
+          reply_to: pronogo.dev@gmail.com
+          from: "PronoGo Machine <pronogo.dev@gmail.com>"
+          body: ${{ steps.check.outputs.body }}
+
+  # 🚨 Filet du filet (08/08) : si le job témoin lui-même PLANTE (bug, quota…),
+  # une alerte part quand même — via le workflow réutilisable, zéro dépendance
+  # fc-pronox, anti-rafale intégré.
+  alerte-panne:
+    needs: witness
+    if: failure()
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/alerte_echec.yml
+    secrets: inherit

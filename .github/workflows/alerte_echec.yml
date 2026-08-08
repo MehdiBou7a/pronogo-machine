@@ -1,0 +1,90 @@
+name: "🚨 Alerte panne (réutilisable — zéro dépendance fc-pronox)"
+# Filet ANTI-SILENCE (08/08). Leçon des 07-08/08 : le jeton FCPRONOX_PAT est mort
+# → CHAQUE workflow échouait à son PREMIER step (checkout de fc-pronox) → le mail
+# quotidien (workflow_run) était « skipped », et même le Témoin contenu était
+# muet : son checkout ET son script d'alerte (ci_alert_email.py) vivaient dans
+# fc-pronox. Panne totale, silence total, pendant plus de 24 h.
+#
+# Ce workflow est branché sur les workflows critiques en `needs + if: failure()`.
+# Il ne dépend de RIEN d'autre que : les secrets Brevo (déjà dans ce dépôt) et
+# l'API GitHub du dépôt public. Il peut donc alerter MÊME quand le PAT est mort
+# — c'est tout son sens.
+#
+# Anti-rafale : il n'envoie le mail qu'à l'ENTRÉE en panne (le run complété
+# précédent du même workflow était vert). Sinon la publication IG/FB (horaire)
+# enverrait 24 mails/jour pendant une panne longue. Le Témoin contenu, lui,
+# continue de faire le bilan détaillé 2×/jour tant que la panne dure.
+#
+# Test du canal : `gh workflow run alerte_echec.yml` → mail [EXERCICE] immédiat.
+
+on:
+  workflow_call:
+    inputs:
+      detail:
+        description: "Détail optionnel à ajouter au corps du mail"
+        type: string
+        required: false
+        default: ""
+  workflow_dispatch: {}   # dispatch direct = EXERCICE (test du canal d'alerte)
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  alerte:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Anti-rafale — n'alerter qu'à l'ENTRÉE en panne
+        id: garde
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WF_NAME: ${{ github.workflow }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "send=1" >> "$GITHUB_OUTPUT"
+            echo "subject=[🔥 EXERCICE — TEST] PronoGo Machine — le canal d'alerte fonctionne" >> "$GITHUB_OUTPUT"
+            echo "EXERCICE : envoi forcé pour prouver le canal."
+            exit 0
+          fi
+          echo "subject=🚨 PronoGo Machine — PANNE : « $WF_NAME » a échoué" >> "$GITHUB_OUTPUT"
+          WF_ID=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq .workflow_id)
+          PREV=$(gh api "repos/${{ github.repository }}/actions/workflows/$WF_ID/runs?status=completed&per_page=10" \
+            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})][0].conclusion // \"none\"")
+          echo "Run complété précédent du même workflow : $PREV"
+          if [ "$PREV" = "failure" ]; then
+            echo "send=0" >> "$GITHUB_OUTPUT"
+            echo "Déjà en panne au run précédent → l'alerte est partie à l'entrée en panne, pas de rafale."
+          else
+            echo "send=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Envoyer l'alerte (Brevo SMTP — aucun checkout, aucun script fc-pronox)
+        if: steps.garde.outputs.send == '1'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-relay.brevo.com
+          server_port: 587
+          username: ${{ secrets.BREVO_SMTP_USER }}
+          password: ${{ secrets.BREVO_SMTP_KEY }}
+          subject: ${{ steps.garde.outputs.subject }}
+          to: ${{ secrets.ALERT_EMAIL }}
+          reply_to: pronogo.dev@gmail.com
+          from: "PronoGo Machine <pronogo.dev@gmail.com>"
+          body: |
+            Workflow concerné : ${{ github.workflow }}
+            Run : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ${{ inputs.detail }}
+
+            Si le log du run montre « fatal: could not read Username for 'https://github.com' »,
+            le jeton FCPRONOX_PAT est mort (expiré ou révoqué). Réparation en 4 clics :
+              1. github.com/settings/tokens → régénérer le jeton (scope « repo »)
+              2. Copier le nouveau jeton
+              3. github.com/MehdiBou7a/pronogo-machine/settings/secrets/actions → FCPRONOX_PAT → Update
+              4. Coller, sauvegarder — la machine repart SEULE au prochain cron.
+
+            (Si l'objet dit EXERCICE : test volontaire du canal, rien n'est en panne.)
+            (Anti-rafale : ce mail ne part qu'à l'ENTRÉE en panne, pas à chaque échec répété.
+             Le Témoin contenu continue le bilan détaillé 2×/jour tant que ça dure.)
