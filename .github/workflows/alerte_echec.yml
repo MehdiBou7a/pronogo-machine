@@ -42,7 +42,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           WF_NAME: ${{ github.workflow }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # ⚠️ Dans un workflow réutilisable, github.event_name est celui de
+          # l'APPELANT : un workflow critique dispatché à la main qui échoue
+          # passerait pour un exercice (constaté au test du 08/08). Le seul
+          # marqueur fiable du dispatch DIRECT de ce workflow est workflow_ref.
+          if [ "${{ contains(github.workflow_ref, 'alerte_echec.yml') }}" = "true" ]; then
             echo "send=1" >> "$GITHUB_OUTPUT"
             echo "subject=[🔥 EXERCICE — TEST] PronoGo Machine — le canal d'alerte fonctionne" >> "$GITHUB_OUTPUT"
             echo "EXERCICE : envoi forcé pour prouver le canal."
