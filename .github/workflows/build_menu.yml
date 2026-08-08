@@ -155,3 +155,16 @@ jobs:
             git pull --rebase --autostash -X theirs origin main || git rebase --abort || true; sleep $((i * 3))
           done
           echo "::error::Push JOUR échoué — le menu du jour n'est pas publié. Rouge volontaire : un échec doit se voir." ; exit 1
+
+  # 🚨 Filet anti-silence (08/08) : si le job ci-dessus ÉCHOUE — y compris dès
+  # son PREMIER step (checkout fc-pronox, PAT mort : la panne muette des
+  # 07-08/08) — une alerte email part via alerte_echec.yml. Zéro dépendance à
+  # fc-pronox, anti-rafale (un seul mail à l'entrée en panne).
+  alerte-panne:
+    needs: build-menu
+    if: failure()
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/alerte_echec.yml
+    secrets: inherit
