@@ -50,7 +50,14 @@ jobs:
           echo "Cycle $CYCLE — attente d'un commit 'journaliste-claude … fiches' postérieur à $SINCE"
           for i in $(seq 1 60); do
             git fetch -q origin main && git reset -q --hard origin/main
-            if [ -n "$(git log --since="$SINCE" --grep='journaliste-claude' --grep='fiches' --all-match --format=%h -1)" ]; then
+            # CORRECTIF 20/08 — le portillon ne s'ouvrait presque jamais le SOIR.
+            # Il exigeait le mot « fiches » EN PLUS de « journaliste-claude »
+            # (--all-match). Or le commit du soir dit souvent « 1 carte X, N sujets
+            # au carnet » SANS le mot « fiches » : mesuré sur 13 soirs (07→19/08),
+            # le portillon s'ouvrait 4 fois au lieu de 8. Les autres fois l'usine
+            # attendait 3 h pour rien, puis repartait en filet Groq (qualité dégradée).
+            # La fenêtre $SINCE borne DÉJÀ le cycle : l'identité de la routine suffit.
+            if [ -n "$(git log --since="$SINCE" --grep='journaliste-claude' --format=%h -1)" ]; then
               echo "✅ Fiches du Journaliste trouvées (essai $i) — l'usine démarre."
               exit 0
             fi

@@ -131,10 +131,29 @@ jobs:
               ecarts.append("menu : construit UNIQUEMENT par le cron de secours (%s) — le CHAÎNAGE usine→menu est mort, à réparer même si la journée est sauvée"
                             % ", ".join(sorted({r["event"] for r in ms})))
 
-          # 3. MAIL
+          # 3. MAIL — ⚠️ CORRECTIF 20/08 : ce contrôle lisait la CONCLUSION du
+          # workflow, jamais sa SORTIE. Or mail_posts.yml finit VERT en n'envoyant
+          # RIEN quand should_send=0 (bug sed → COUNT=0, 01→20/08) : le témoin a
+          # donc annoncé « ✅ mail : parti » chaque jour pendant 19 jours de silence
+          # total, et la panne de publication (820 posts bloqués) est restée muette.
+          # LA PREUVE D'UN ENVOI N'EST PAS UN RUN VERT : c'est le MARQUEUR que le
+          # job d'envoi committe dans fc-pronox APRÈS l'envoi. On lit la sortie.
+          marqueur = os.path.join("marketing", "reports", "routines", "posts",
+                                  ".mailed_%s_%s" % (date_paris, cycle))
           mail = [r for r in runs("mail_posts.yml") if r["conclusion"] == "success"]
-          if mail:
-              ok.append("mail : parti %s" % mail[0]["created_at"])
+          if pat_mort:
+              (encore if encore else ecarts).append(
+                  "mail : INVÉRIFIABLE — fc-pronox inaccessible, marqueur illisible")
+          elif os.path.isfile(marqueur):
+              ok.append("mail : PARTI ✓ (marqueur %s) — sortie vérifiée, pas le statut"
+                        % os.path.basename(marqueur))
+          elif mail:
+              ecarts.append(
+                  "mail : le workflow est VERT mais AUCUN email n'est parti — marqueur "
+                  "%s ABSENT. Ouvrir le dernier run mail_posts.yml, step « Compter les "
+                  "posts du jour » : si should_send=0, la chaîne de validation est "
+                  "coupée et RIEN ne se publiera (les posts restent « prêts » sans fin)."
+                  % os.path.basename(marqueur))
           else:
               (encore if encore else ecarts).append(
                   "mail : ABSENT — aucun email de validation envoyé ce cycle")
