@@ -104,6 +104,14 @@ jobs:
           echo "cycle=$CYCLE" >> "$GITHUB_OUTPUT"
           DIR="marketing/reports/routines/posts"
           MARKER="$DIR/.mailed_${DATE}_${CYCLE}"
+
+          # PROFONDEUR DU CLONE (correctif 20/08) : le checkout est SHALLOW
+          # (fetch-depth: 50) alors que la fenetre du cycle du SOIR compte 68 a
+          # 78 commits (mesure sur les 4 derniers soirs). Sans approfondissement,
+          # `git log --since` ne voit qu une PARTIE du cycle et le mail sous-compte
+          # en silence. --shallow-since approfondit EXACTEMENT jusqu a la borne du
+          # cycle : pas un commit de plus (temps de checkout borne).
+          git fetch -q --shallow-since="$CYCLE_SINCE" origin main 2>/dev/null || git fetch -q --deepen=200 origin main 2>/dev/null || true
           FORCE="${{ github.event.inputs.force }}"
 
           if [ -f "$MARKER" ] && [ "$FORCE" != "true" ]; then
@@ -121,7 +129,8 @@ jobs:
           # et seulement ceux AJOUTÉS PENDANT CE CYCLE (git, pas l'horloge).
           COUNT=$(git log --since="$CYCLE_SINCE" --diff-filter=A --name-only --format= -- "$DIR" \
             | grep -E "^${DIR}/${DATE}_[a-z0-9]+_.+\.html$" \
-            | sed -E "s#^${DIR}/${DATE}_[a-z0-9]+_##; s#\.html$##" \
+            | sed -E "s#^${DIR}/${DATE}_[a-z0-9]+_##" \
+            | sed -E 's#\.html$##' \
             | sort -u | wc -l | tr -d ' ')
           [ -z "$COUNT" ] && COUNT=0
           echo "Posts distincts produits pendant le cycle $CYCLE : $COUNT"
