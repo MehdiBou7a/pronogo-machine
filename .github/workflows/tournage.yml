@@ -67,16 +67,72 @@ jobs:
             fi
           done
 
-      - name: Commit rushes + captures
+      - name: Allegement des captures (PNG -> WebP, sans perte de resolution)
+        # POURQUOI CETTE ETAPE EXISTE (2026-08-22).
+        # Le Cameraman poussait 18,9 Mo par prise, 3 fois par jour depuis le
+        # 20/07 : 1 654 Mo d historique en 110 passages, pour un depot qui pese
+        # 16 Go alors que le CODE en pese 35 Mo. Mesure de la prise du 22/08 :
+        #     tour_onglets.mp4     11 717 280 o   62 %   -> le Monteur
+        #     8 captures PNG        7 561 842 o   38 %   -> le Realisateur
+        # Le Monteur NE TOURNE PAS (sa porte « tournage pret » n a jamais ete
+        # ouverte). 62 % du poids etait donc une video que personne n ouvrait.
+        #
+        # WebP q85 a PLEINE RESOLUTION : 7 561 842 -> 895 654 o, soit /8,4, et
+        # le Realisateur lit toujours les petits chiffres (verifie en REGARDANT
+        # un avant/apres, pas en le supposant).
+        run: |
+          pip install --quiet pillow
+          python -X utf8 marketing/tools/alleger_rushes.py
+
+      - name: Commit captures (+ rush video seulement si le Monteur mange)
         run: |
           git config user.name "PronoGo Cameraman"
           git config user.email "pronogo.dev@gmail.com"
-          git add marketing/tournage/rushes/ 2>/dev/null || true
-          if git diff --cached --quiet; then
-            echo "Rien à committer."; exit 0
+
+          # Les .webp NE SONT PAS ignores par .gitignore, et c est VOULU : c est
+          # par la que le Realisateur voit. Les .png et .mp4 le sont depuis le
+          # 22/08, donc `git add` les saute -- SANS UN MOT, c est le piege de
+          # cette commande sur un DOSSIER. D ou le controle explicite plus bas.
+          git add -A -- marketing/tournage/rushes/
+
+          # LA VIDEO N ENTRE QUE LE JOUR OU QUELQU UN LA MANGE.
+          # short.yml (le Monteur) ne se declenche que si le Realisateur a ecrit
+          # « tournage pret » dans son journal. Tant que cette porte est fermee,
+          # committer 11,7 Mo trois fois par jour n alimente personne.
+          if grep -qiE "tournage pret|tournage pr.t" marketing/tournage/JOURNAL_REALISATEUR.md 2>/dev/null; then
+            echo "Porte du Monteur OUVERTE -> la video part avec les captures."
+            for v in marketing/tournage/rushes/*.mp4; do
+              [ -e "$v" ] || continue
+              git add -f "$v"
+            done
+          else
+            echo "Porte du Monteur FERMEE -> video gardee sur le runner, hors depot."
           fi
-          git commit -m "tournage($(date -u +%Y-%m-%d)) rushes [cloud]"
+
+          # UN VERT MUET EST UNE PANNE. Si la prise a produit des captures et que
+          # rien n est en index, c est que quelque chose les a avalees (un
+          # .gitignore elargi, un chemin renomme). Avant le 22/08 ce cas sortait
+          # en `exit 0` : le job restait vert et le Realisateur devenait aveugle
+          # sans qu aucune alerte ne parte. On ECHOUE, bruyamment.
+          captures=$(ls -1 marketing/tournage/rushes/*/*.webp 2>/dev/null | wc -l)
+          if git diff --cached --quiet; then
+            if [ "$captures" -gt 0 ]; then
+              echo "::error::$captures capture(s) sur le disque et RIEN en index."
+              echo "::error::Le depot ne les voit pas -- verifier que *.webp sous"
+              echo "::error::marketing/tournage reste SUIVI par git, et les chemins."
+              exit 1
+            fi
+            echo "Aucune capture produite et rien a committer -- prise vide."
+            exit 0
+          fi
+
+          git commit -m "tournage($(date -u +%Y-%m-%d)) captures [cloud]"
+
           for i in 1 2 3 4 5; do
             if git push origin HEAD:main; then echo "Push OK."; exit 0; fi
             git pull --rebase --autostash origin main; sleep $((i * 3))
           done
+          # Avant le 22/08 il n y avait RIEN ici : cinq echecs de push rendaient
+          # la main en VERT. Meme famille que le vert muet ci-dessus.
+          echo "::error::5 tentatives de push echouees -- rien n est arrive sur main."
+          exit 1
