@@ -1,0 +1,276 @@
+name: "📰 Journal de Goalardo — l'édition du jour"
+#
+# ⚠️ CE FICHIER N'APPARTIENT PAS À CE DÉPÔT. Sa place est
+#    MehdiBou7a/pronogo-machine → .github/workflows/journal_goalardo.yml
+#    Il est déposé ici pour être versionné et relu ; le dépôt fc-pronox n'a
+#    aucun workflow qui le lance. Commande de dépôt : cf le rapport du 28/08.
+#
+# ─── CE QUE FAIT CETTE ROUTINE ────────────────────────────────────────────────
+# Elle publie les ≤ 5 commentaires d'actualité que Goalardo dit aux joueurs
+# dans la journée (doc Firestore `config/mascot_journal`). Sans elle, le
+# Journal se TAIT TOUT SEUL, en silence : chaque item porte une TTL LOGIQUE de
+# 48 h, donc l'édition d'hier meurt d'elle-même sans qu'aucune alarme ne parte.
+#
+#   ① node scripts/ops/goalardo_journal_brief.js --json   (lecture seule)
+#      → les fiches ÉLIGIBLES du jour, décidées par functions/_lib/goalardoJournal.js
+#   ② node scripts/ops/goalardo_journal_brief.js --consigne
+#      → la VOIX de Goalardo (SYSTEM_PROMPT + fiches), telle qu'elle vit dans
+#        functions/journalGoalardo.js. On ne la recopie PAS dans ce YAML : la
+#        doctrine (memory/project_mascotte_emotions_doctrine.md,
+#        memory/project_goalardo_role_quatre_objectifs.md) vit sur le poste du
+#        fondateur et n'existe PAS dans un runner — mais le code qui l'applique,
+#        lui, est dans le dépôt et c'est celui de la chaîne sœur.
+#   ③ une session Claude met en voix, FR + EN, et écrit /tmp/repliques.json
+#   ④ CONTRÔLE LOCAL en dry-run (gratuit, hors ligne) avant de toucher au serveur
+#   ⑤ POST syncTrigger?scenario=journal-goalardo-publier&apply=1
+#   ⑥ le serveur RELIT sa cible et rend `releve_brut` → on committe
+#      data/releves_cibles/journal_goalardo.json dans fc-pronox
+#
+# ─── POURQUOI PAS DE COMPTE DE SERVICE FIREBASE ───────────────────────────────
+# CE DÉPÔT EST PUBLIC. Un service account est la clé de TOUTE la base ; le
+# déposer en secret ici pour écrire cinq lignes par jour est disproportionné, et
+# n'importe quel workflow de ce dépôt pourrait le lire. On passe donc par
+# ADMIN_SYNC_TOKEN — un jeton qui ne sait faire QU'UNE chose, déjà déposé le
+# 2026-07-08. AUCUN secret n'est à créer pour cette routine.
+#
+# ─── CE QUI DIRAIT QU'ELLE EST EN PANNE ───────────────────────────────────────
+#   ▸ `data/releves_cibles/journal_goalardo.json` (dans fc-pronox) CESSE DE SE
+#     DATER DU JOUR. C'est LE signal. Il est déposé même les jours sans
+#     actualité publiable — donc son absence ne veut dire qu'une chose : la
+#     routine n'a pas tourné.
+#   ▸ Ce relevé passe à `"elements": 0` → Goalardo est MUET depuis plus de 48 h.
+#     Le run échoue alors volontairement (→ mail via alerte_echec.yml) et
+#     `scripts/check_filenames.sh` (section I) passe au ROUGE côté dépôt.
+#
+# ─── UNE JOURNÉE SANS ACTUALITÉ N'EST PAS UNE PANNE ───────────────────────────
+# Zéro fiche dicible un matin donné est NORMAL (fraîcheur 36 h, corroboration,
+# ligne éditoriale, no-gambling). La routine s'arrête alors en SILENCE, en
+# vert. Une alarme qui crie un jour sur deux finit ignorée — c'est le pire
+# résultat possible pour une alarme.
+#
+# ─── COÛT ─────────────────────────────────────────────────────────────────────
+# 1 écriture + 1 lecture Firestore par jour · 1 invocation de Cloud Function
+# par jour · ZÉRO appel à l'API football (la matière vient du dépôt) · ZÉRO
+# jeton Anthropic (la mise en voix passe par l'abonnement, CLAUDE_CODE_OAUTH_TOKEN).
+
+on:
+  schedule:
+    # 08h15 Paris (été) / 07h15 (hiver). Mesuré sur les 6 derniers commits
+    # « PronoGo Collecte » : 02h54 · 15h06 · 05h38 · 05h32 · 05h38 · 05h35 Paris.
+    # 08h15 tient 5 fois sur 6 ; le 6ᵉ est justement le cas « collecte pas
+    # passée » — les fiches sont périmées, zéro éligible, sortie en silence.
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run : tout sauf l'écriture Firestore"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: journal-goalardo
+  cancel-in-progress: false
+
+jobs:
+  journal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fc-pronox (privé)
+        uses: actions/checkout@v4
+        with:
+          repository: MehdiBou7a/fc-pronox
+          token: ${{ secrets.FCPRONOX_PAT }}
+          ref: main
+          fetch-depth: 5
+
+      - name: Node 22 (même moteur que les Cloud Functions)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # ── ① LES FICHES ÉLIGIBLES ─────────────────────────────────────────────
+      # 100 % lecture seule, zéro dépendance npm, zéro réseau. La règle de
+      # sélection n'est PAS ici : elle vit dans functions/_lib/goalardoJournal.js.
+      - name: Les fiches éligibles du jour
+        run: |
+          set -euo pipefail
+          node scripts/ops/goalardo_journal_brief.js --json > /tmp/brief.json
+          N=$(jq -r '.report.facts_eligible' /tmp/brief.json)
+          T=$(jq -r '.report.facts_total' /tmp/brief.json)
+          echo "Fiches : $T au total, $N éligible(s)."
+          jq -r '.report.rejected_by_reason | to_entries[] | "  refusées \(.key) : \(.value)"' /tmp/brief.json
+          if [ "$N" -eq 0 ]; then
+            echo "⚪ JOURNÉE CALME — aucune fiche dicible ce matin. Rien ne sera publié ;"
+            echo "   l'édition de la veille vit sa TTL de 48 h. Ce n'est PAS une panne."
+            echo "JOURNEE_CALME=1" >> "$GITHUB_ENV"
+            # Un lot VIDE, pour que les étapes ⑤ et ⑥ tournent quand même : le
+            # serveur ne publiera rien, mais il RELIRA sa cible et la preuve du
+            # jour sera déposée. C'est ce qui distingue « rien à dire ce matin »
+            # de « la routine ne tourne plus ».
+            echo '{"schema_version":1,"items":[]}' > /tmp/repliques.json
+          fi
+
+      # ── ② LA VOIX, SANS LA RECOPIER ────────────────────────────────────────
+      - name: La consigne de voix (source unique = functions/journalGoalardo.js)
+        if: env.JOURNEE_CALME != '1'
+        run: |
+          set -euo pipefail
+          node scripts/ops/goalardo_journal_brief.js --consigne > /tmp/consigne_voix.txt
+          wc -l /tmp/consigne_voix.txt
+
+      # ── ③ LA MISE EN VOIX ──────────────────────────────────────────────────
+      # La session ne touche PAS au dépôt : elle écrit UN fichier, dans /tmp.
+      # Le commit final est de toute façon fait au pathspec exact (cf ⑥).
+      - name: Mise en voix par Goalardo (session Claude)
+        if: env.JOURNEE_CALME != '1'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN absent — aucune mise en voix possible."
+            exit 1
+          fi
+          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+          cat > /tmp/prompt.txt <<'PROMPTEOF'
+          Tu es la plume de Goalardo, la mascotte de PronoGo (application de football fantasy, SANS ARGENT REEL).
+
+          LIS D'ABORD, EN ENTIER, le fichier /tmp/consigne_voix.txt. Il contient DEUX choses, dans cet ordre :
+            1. la doctrine de voix de Goalardo et les REGLES ABSOLUES (elles viennent du code de production, functions/journalGoalardo.js — elles ne se discutent pas) ;
+            2. les fiches d'actualite ELIGIBLES du jour, chacune avec son fact_id, son fact_lien, sa source, son titre et son resume, puis la liste des poses admises et le format de sortie exact.
+
+          Applique CETTE consigne a la lettre. Les points sur lesquels le serveur refusera ton travail sans discussion :
+            - tu ne commentes QUE les fiches donnees, rien d'autre n'existe ;
+            - tu recopies EXACTEMENT fact_id et fact_lien (un caractere de travers = replique jetee) ;
+            - AUCUN chiffre absent de la fiche ;
+            - vocabulaire de mise INTERDIT (pari, mise, cote, bet, bookmaker...), y compris « Paris » la VILLE : ecris « PSG » ou « le club de la capitale » ;
+            - jamais de vie privee, de sante, de deuil, de justice, de polemique ; une blessure sportive reste une info de jeu autorisee ;
+            - jamais d'angle « zero mercato », jamais d'incitation a jouer de l'argent, jamais de pronostic « sur » ;
+            - FR ET EN pour chaque replique ; une seule phrase, deux courtes au maximum ; pas d'emoji, pas de hashtag.
+            - VARIE les poses et les objectifs, et prends des sujets DIFFERENTS (pas deux fois le meme club).
+
+          TA SEULE SORTIE : ecris le fichier /tmp/repliques.json et RIEN d'autre. Aucun fichier du depot ne doit etre modifie. Aucun commit. Aucun git.
+          Contenu attendu, JSON strict, sans balise Markdown, sans texte avant ni apres :
+          {"schema_version":1,"items":[{"fact_id":"...","fact_lien":"...","text":{"fr":"...","en":"..."},"objectif":"jouer","pose":"journal"}]}
+
+          Si AUCUNE fiche ne merite d'etre dite a un joueur ce matin, ecris {"schema_version":1,"items":[]} — c'est un resultat legitime, pas un echec. Mieux vaut se taire que dire une banalite.
+          Quand le fichier est ecrit, reponds en UNE ligne : le nombre de repliques ecrites.
+          PROMPTEOF
+          claude -p "$(cat /tmp/prompt.txt)" --model sonnet --dangerously-skip-permissions || {
+            echo "::error::la mise en voix a echoue."; exit 1; }
+          if [ ! -s /tmp/repliques.json ]; then
+            echo "::error::/tmp/repliques.json n'a pas ete ecrit."; exit 1
+          fi
+          # Normalisation defensive : on tolere d'eventuelles balises Markdown,
+          # on refuse tout ce qui n'est pas un objet JSON exploitable.
+          node -e '
+            const fs = require("fs");
+            let t = fs.readFileSync("/tmp/repliques.json", "utf8").trim();
+            t = t.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+            const o = JSON.parse(t);
+            if (!o || typeof o !== "object" || !Array.isArray(o.items)) {
+              throw new Error("forme invalide : {schema_version, items[]} attendu");
+            }
+            o.schema_version = 1;
+            fs.writeFileSync("/tmp/repliques.json", JSON.stringify(o, null, 2));
+            console.log("répliques mises en voix :", o.items.length);
+            if (o.items.length === 0) console.log("JOURNEE_CALME_MODELE");
+          '
+          if grep -q '"items": \[\]' /tmp/repliques.json; then
+            echo "⚪ Le rédacteur n'a rien retenu ce matin — journée calme."
+            echo "   Le lot vide part quand même au serveur : il ne publiera rien,"
+            echo "   mais il relira la cible et la preuve du jour sera déposée."
+            echo "JOURNEE_CALME=1" >> "$GITHUB_ENV"
+          fi
+
+      # ── ④ CONTRÔLE AVANT DE TOUCHER AU SERVEUR ─────────────────────────────
+      # Le MÊME module de décision, en dry-run, hors ligne, sans credentials.
+      # Une mise en voix hors contrat est attrapée ICI, avant tout appel réseau.
+      # Codes de sortie : 0 = rien à redire · 1 = lot cassé · 2 = usage.
+      - name: Contrôle local du lot (dry-run, hors ligne)
+        if: env.JOURNEE_CALME != '1'
+        run: |
+          set -euo pipefail
+          node functions/scripts/goalardoJournal.js --replicas=/tmp/repliques.json
+
+      # ── ⑤ PUBLICATION ──────────────────────────────────────────────────────
+      # Cette étape tourne TOUS LES JOURS, y compris les journées calmes : avec
+      # un lot vide, le serveur n'écrit rien et se contente de RELIRE sa cible.
+      # C'est cette relecture qui fait la preuve quotidienne.
+      - name: Publier l'édition (scénario admin, jeton à usage unique)
+        env:
+          ADMIN_SYNC_TOKEN: ${{ secrets.ADMIN_SYNC_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ADMIN_SYNC_TOKEN:-}" ]; then
+            echo "::error::ADMIN_SYNC_TOKEN absent du dépôt."; exit 1
+          fi
+          jq -n --slurpfile f marketing/content_machine/infos_du_jour.json \
+                --slurpfile r /tmp/repliques.json \
+                '{facts: $f[0], replicas: $r[0]}' > /tmp/body.json
+          echo "Corps de la requête : $(du -h /tmp/body.json | cut -f1)"
+          APPLY=1
+          if [ "${DRY_RUN:-false}" = "true" ]; then APPLY=0; echo "(dry_run demandé : rien ne sera écrit)"; fi
+          URL="https://europe-west9-fc-pronox.cloudfunctions.net/syncTrigger?scenario=journal-goalardo-publier&apply=${APPLY}"
+          CODE=$(curl -sS -o /tmp/reponse.json -w '%{http_code}' -X POST "$URL" \
+                   -H "x-admin-token: ${ADMIN_SYNC_TOKEN}" \
+                   -H 'Content-Type: application/json' \
+                   --data-binary @/tmp/body.json)
+          echo "HTTP $CODE"
+          jq -r '.result.motif // .motif // "?"' /tmp/reponse.json | sed 's/^/motif : /'
+          jq '.result.report // .report' /tmp/reponse.json
+          if [ "$CODE" != "200" ]; then
+            echo "::error::le scénario a refusé le lot (HTTP $CODE) — voir le rapport ci-dessus."
+            exit 1
+          fi
+          MOTIF=$(jq -r '.result.motif' /tmp/reponse.json)
+          if [ "$MOTIF" = "journee_calme" ]; then
+            echo "⚪ Journée calme confirmée par le serveur — rien n'a été écrit."
+          fi
+
+      # ── ⑥ LA PREUVE ────────────────────────────────────────────────────────
+      # Le relevé se dépose MÊME les jours calmes : c'est ce qui distingue
+      # « rien à dire ce matin » de « la routine ne tourne plus ».
+      - name: Déposer et committer le relevé de la cible
+        run: |
+          set -euo pipefail
+          if [ ! -s /tmp/reponse.json ]; then
+            echo "::warning::aucune réponse du scénario — pas de relevé à déposer."; exit 0
+          fi
+          RC=0
+          node scripts/ops/relever_cibles_firestore.js \
+               --piece journal_goalardo --depuis-scenario /tmp/reponse.json || RC=$?
+          git config user.name "PronoGo Journal Goalardo"
+          git config user.email "pronogo.dev@gmail.com"
+          git add data/releves_cibles/journal_goalardo.json
+          if git diff --cached --quiet; then
+            echo "Relevé inchangé — rien à committer."
+          else
+            git commit -m "journal-goalardo: relevé de $(date -u +%F) [routine]"
+            for i in 1 2 3 4 5; do
+              if git push origin HEAD:main; then echo "Push OK (essai $i)."; break; fi
+              git pull --rebase --autostash origin main || git rebase --abort || true
+              sleep $((i * 3))
+            done
+          fi
+          if [ "$RC" != "0" ]; then
+            echo "::error::la cible a été RELUE et elle est VIDE (elements=0) —"
+            echo "  Goalardo est MUET depuis plus de 48 h. Ce n'est plus une journée calme."
+            exit 1
+          fi
+
+  # 🚨 Filet anti-silence — même montage que usine_tipster.yml. Zéro dépendance
+  # à fc-pronox : il alerte même si le PAT est mort (panne des 07-08/08).
+  alerte-panne:
+    needs: journal
+    if: failure()
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/alerte_echec.yml
+    secrets: inherit
