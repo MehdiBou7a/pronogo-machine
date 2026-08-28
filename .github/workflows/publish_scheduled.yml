@@ -26,6 +26,12 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # `id-token: write` (28/08) = SEUL droit ajouté. Il autorise ce job à demander
+    # à GitHub un jeton OIDC, échangé ensuite contre l'identité fédérée Google.
+    # C'est ce qui remplace le secret FIREBASE_TOKEN. Le reste ne bouge pas.
+    permissions:
+      contents: read
+      id-token: write
     timeout-minutes: 15
     steps:
       - name: Checkout fc-pronox (privé)
@@ -59,13 +65,32 @@ jobs:
         if: env.SKIP_ALL != '1'
         run: npm install -g firebase-tools
 
+      # ── IDENTITÉ FÉDÉRÉE GOOGLE (28/08) — remplace le secret FIREBASE_TOKEN ──
+      # Ce dépôt est PUBLIC et portait un jeton `firebase login:ci` : TOUS les
+      # droits sur le projet Firebase, alors qu'on n'héberge que des vignettes.
+      # Désormais : GitHub émet un jeton OIDC de courte durée, Google le vérifie
+      # (condition : le dépôt DOIT être MehdiBou7a/pronogo-machine) et rend un
+      # accès court au compte de service usine-hosting, qui ne porte QUE
+      # roles/firebasehosting.admin et n'a AUCUNE clé. Zéro secret stocké.
+      # L'action exporte GOOGLE_APPLICATION_CREDENTIALS → la CLI Firebase le lit
+      # seule (cf marketing/tools/build_approval_menu.py::_firebase_auth).
+      # ⚠️ Placée APRÈS le checkout (elle écrit dans le workspace, que le checkout
+      #    nettoie) et AVANT tout appel à la CLI.
+      # ⚠️ Épinglée au SHA de v3.0.0 : une action tierce voit tout ce qui passe
+      #    par le job — jamais @main, jamais un tag mouvant.
+      - name: Authentification Google (identité fédérée, sans aucun secret)
+        if: env.SKIP_ALL != '1'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: "projects/618273407144/locations/global/workloadIdentityPools/github-usine/providers/github"
+          service_account: "usine-hosting@fc-pronox.iam.gserviceaccount.com"
+
       - name: Publier (cloud_publish.py)
         if: env.SKIP_ALL != '1'
         env:
           META_LONG_LIVED_TOKEN: ${{ secrets.META_LONG_LIVED_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
           APPROVAL_API_URL: ${{ secrets.APPROVAL_API_URL }}
           APPROVAL_LINK_TOKEN: ${{ secrets.APPROVAL_LINK_TOKEN }}
           X_API_KEY: ${{ secrets.X_API_KEY }}
@@ -86,7 +111,6 @@ jobs:
       - name: Filet — reconstruire le menu de validation (idempotent)
         if: env.SKIP_ALL != '1' && github.event.inputs.dry_run != 'true'
         env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
           ADMIN_SYNC_TOKEN: ${{ secrets.ADMIN_SYNC_TOKEN }}
         run: python -X utf8 marketing/tools/build_approval_menu.py || echo "filet menu non bloquant"
 
