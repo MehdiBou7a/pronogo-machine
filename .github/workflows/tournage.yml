@@ -30,7 +30,7 @@ jobs:
         with:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
-          ref: main
+          ref: usine
           fetch-depth: 2
 
       - name: Setup Python
@@ -129,10 +129,10 @@ jobs:
           git commit -m "tournage($(date -u +%Y-%m-%d)) captures [cloud]"
 
           for i in 1 2 3 4 5; do
-            if git push origin HEAD:main; then echo "Push OK."; exit 0; fi
-            git pull --rebase --autostash origin main; sleep $((i * 3))
+            if git push origin HEAD:usine; then echo "Push OK."; exit 0; fi
+            git pull --rebase --autostash origin usine; sleep $((i * 3))
           done
           # Avant le 22/08 il n y avait RIEN ici : cinq echecs de push rendaient
           # la main en VERT. Meme famille que le vert muet ci-dessus.
-          echo "::error::5 tentatives de push echouees -- rien n est arrive sur main."
+          echo "::error::5 tentatives de push echouees -- rien n est arrive sur usine."
           exit 1

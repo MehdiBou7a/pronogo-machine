@@ -30,7 +30,7 @@ jobs:
         with:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
-          ref: main
+          ref: usine
           fetch-depth: 50   # profondeur pour retrouver le commit QC « redacteur-en-chef » dans le log
 
       # ── DATE DU CYCLE (correctif fondateur 01/08) ────────────────────────
@@ -79,7 +79,7 @@ jobs:
           SINCE="$CYCLE_SINCE"
           echo "Attente d'un commit 'redacteur-en-chef' postérieur à $SINCE"
           for i in $(seq 1 20); do
-            git fetch -q origin main && git reset -q --hard origin/main
+            git fetch -q origin usine && git reset -q --hard origin/usine
             if [ -n "$(git log --since="$SINCE" --grep='redacteur-en-chef' --format=%h -1)" ]; then
               echo "✅ QC du Rédacteur trouvé (essai $i) — envoi."
               exit 0
@@ -111,7 +111,7 @@ jobs:
           # `git log --since` ne voit qu une PARTIE du cycle et le mail sous-compte
           # en silence. --shallow-since approfondit EXACTEMENT jusqu a la borne du
           # cycle : pas un commit de plus (temps de checkout borne).
-          git fetch -q --shallow-since="$CYCLE_SINCE" origin main 2>/dev/null || git fetch -q --deepen=200 origin main 2>/dev/null || true
+          git fetch -q --shallow-since="$CYCLE_SINCE" origin usine 2>/dev/null || git fetch -q --deepen=200 origin usine 2>/dev/null || true
           FORCE="${{ github.event.inputs.force }}"
 
           if [ -f "$MARKER" ] && [ "$FORCE" != "true" ]; then
@@ -183,8 +183,8 @@ jobs:
           git add "$MARKER"
           git commit -m "state(mail) marqueur anti-doublon $DATE [skip ci]" || { echo "rien à committer"; exit 0; }
           for i in 1 2 3; do
-            if git push origin HEAD:main; then exit 0; fi
-            git pull --rebase --autostash -X theirs origin main || git rebase --abort || true; sleep $((i * 3))
+            if git push origin HEAD:usine; then exit 0; fi
+            git pull --rebase --autostash -X theirs origin usine || git rebase --abort || true; sleep $((i * 3))
           done
           echo "::warning::Push marqueur échoué — au pire un 2e mail partira. Bénin mais VISIBLE désormais."
 
