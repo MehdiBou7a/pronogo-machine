@@ -36,7 +36,7 @@ jobs:
         with:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
-          ref: main
+          ref: usine
           fetch-depth: 50   # profondeur pour retrouver le commit « fiches » du cycle dans le log
 
       - name: Attendre les fiches du Journaliste (chaînage événementiel, max 3h)
@@ -49,7 +49,7 @@ jobs:
           if [ "$HOUR" -lt 15 ]; then SINCE="$(date -u +%F)T00:00:00Z"; CYCLE="matin"; else SINCE="$(date -u +%F)T18:00:00Z"; CYCLE="soir"; fi
           echo "Cycle $CYCLE — attente d'un commit 'journaliste-claude … fiches' postérieur à $SINCE"
           for i in $(seq 1 60); do
-            git fetch -q origin main && git reset -q --hard origin/main
+            git fetch -q origin usine && git reset -q --hard origin/usine
             # CORRECTIF 20/08 — le portillon ne s'ouvrait presque jamais le SOIR.
             # Il exigeait le mot « fiches » EN PLUS de « journaliste-claude »
             # (--all-match). Or le commit du soir dit souvent « 1 carte X, N sujets
@@ -157,14 +157,14 @@ jobs:
           fi
           git commit -m "usine(contenu) $(date -u +%Y-%m-%d) [cloud]"
           for i in 1 2 3 4 5; do
-            if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
+            if git push origin HEAD:usine; then echo "Push OK (essai $i)."; exit 0; fi
             # -X theirs : conflit de CONTENU sur un fichier régénéré (carte/page du
             # jour) => la version de CE run gagne. Sans ça, run perdu (21/07 13h :
             # conflit sur goalardo-officiel.html, production entière jetée).
-            git pull --rebase --autostash -X theirs origin main || git rebase --abort || true
+            git pull --rebase --autostash -X theirs origin usine || git rebase --abort || true
             sleep $((i * 3))
           done
-          echo "::error::Push échoué après 5 essais — la production du cycle N'EST PAS sur main. Un run VERT aurait caché cette perte (motif de l'incident du 21/07)." ; exit 1
+          echo "::error::Push échoué après 5 essais — la production du cycle N'EST PAS sur usine. Un run VERT aurait caché cette perte (motif de l'incident du 21/07)." ; exit 1
 
       - name: QC Redacteur en chef (session Claude DANS l'usine — evenementiel 27/07)
         # Les cartes viennent d'etre committees par CE job -> le QC tourne dans la
@@ -181,10 +181,10 @@ jobs:
           if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
             echo "(secret CLAUDE_CODE_OAUTH_TOKEN absent -> QC par la routine de secours)"; exit 0
           fi
-          git pull --rebase origin main || true
+          git pull --rebase origin usine || true
           npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || { echo "::warning::install claude-code KO -> routine de secours"; exit 0; }
           cat > /tmp/qc_prompt.txt <<'QCEOF'
-          Tu es le REDACTEUR EN CHEF de PronoGo (app foot fantasy FR). Tu tournes DANS le workflow de l'usine, juste apres la fabrication des cartes : les posts du jour sont DEJA dans ce depot (checkout fc-pronox, branche main a jour). ZERO attente necessaire. Travaille sans trainer, la qualite prime.
+          Tu es le REDACTEUR EN CHEF de PronoGo (app foot fantasy FR). Tu tournes DANS le workflow de l'usine, juste apres la fabrication des cartes : les posts du jour sont DEJA dans ce depot (checkout fc-pronox, branche usine a jour). ZERO attente necessaire. Travaille sans trainer, la qualite prime.
           ETAPE 0 : date=$(date -u +%F) ; cycle = matin si heure UTC < 15, sinon soir. Si _PILOTAGE/rapports/${date}_redacteur_en_chef_${cycle}.html existe deja -> QC deja fait, STOP en une ligne. Sinon : git config user.name "PronoGo Redacteur QC" && git config user.email "pronogo.dev@gmail.com".
           OU REGARDER : cartes = marketing/reports/routines/posts/${date}_instagram_*.html (+ .png jumeau, REGARDE les images) ; legende publiable dans <div id="cap"> ; chaine du jour = marketing/content_machine/{infos_comprises,sujets_du_jour,selection_du_jour,posts_du_jour}.json ; memes = marketing/content_machine/a_valider/.
           MISSION (traite d'abord les cartes marquees "PRIORITE QC", puis "LA UNE") :
@@ -192,7 +192,7 @@ jobs:
           2) LEGENDES : reecris chaque legende faible dans le <div id="cap"> : 1re ligne = HOOK autonome <= 90 caracteres, recit vivant, pro-France/PSG (on chambre les rivaux, JAMAIS la France ni le PSG), 1-2 emojis max, 3-5 hashtags, ACCENTS FRANCAIS OBLIGATOIRES. INTERDIT : chiffre/nom/fait absent de la fiche, mot RECORD, "selon X" hors rumeur, noms deformes.
           3) GATE VISUEL — REPARER D'ABORD, DEPUBLIER EN DERNIER RECOURS (regle fondateur 27/07 : « on ne perd JAMAIS une info ») : regarde chaque .png du jour UN PAR UN. Defauts eliminatoires : visage coupe / sujet sans visage / mauvaise personne / texte illisible ou recouvert / caractere casse / detourage rate / photo d'archive evidente. Carte defectueuse -> SUPPRIME .html ET .png (versions _instagram_ ET _facebook_). AVANT toute suppression, si le defaut est de FABRICATION (texte qui deborde, textes superposes, caractere casse) : REPARE — raccourcis l1/l2 du post concerne dans marketing/content_machine/posts_du_jour.json (les FAITS restent identiques, seule la formulation raccourcit), puis pip install --quiet Pillow opencv-python-headless onnxruntime numpy rembg et python -X utf8 marketing/tools/actu_run.py (les cles GROQ/FAL sont fournies a cette etape), et VERIFIE le PNG regenere. Depublie SEULEMENT si la reparation echoue ou si le defaut est une PHOTO (mauvaise personne, visage coupe — pas reparable ici). TOUTE depublication definitive : libere la memoire 30j du sujet pour qu'il soit refabrique au prochain cycle — python -X utf8 -c "import importlib.util;s=importlib.util.spec_from_file_location('dh','marketing/tools/dedup_history.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print('liberees:', m.release(['MOT1','MOT2']))" (MOT1/MOT2 = mots du slug de la carte, ex 'bradley','barcola') — et note la carte dans le rapport comme « depubliee, sujet libere, a refabriquer ». Doute de GOUT on garde, doute sur un DEFAUT liste on repare/supprime. Chaque suppression listee dans le rapport.
           4) RAPPORT : _PILOTAGE/rapports/${date}_redacteur_en_chef_${cycle}.html — HTML style autonome (fond #0d1117, cartes #161b22, or #e8b84a, zero jargon) : note /10 du cycle, anomalies, cartes depubliees (fichier + defaut), legendes AVANT->APRES, 3 conseils pour l'usine.
-          5) COMMIT + PUSH main : message exact "redacteur-en-chef: ${date} ${cycle} — QC + depublications + rapport [routine]" (le menu et le mail attendent ce mot-cle). Fichiers autorises UNIQUEMENT : les .html/.png de marketing/reports/routines/posts/, marketing/content_machine/{posts_du_jour,history}.json si tu as repare/libere, et ton rapport _PILOTAGE/rapports/. Ne touche JAMAIS marketing/tools/, lib/, functions/, les .json d'etat. Push refuse -> git pull --rebase origin main puis reessaie, 5 fois.
+          5) COMMIT + PUSH usine : message exact "redacteur-en-chef: ${date} ${cycle} — QC + depublications + rapport [routine]" (le menu et le mail attendent ce mot-cle). Fichiers autorises UNIQUEMENT : les .html/.png de marketing/reports/routines/posts/, marketing/content_machine/{posts_du_jour,history}.json si tu as repare/libere, et ton rapport _PILOTAGE/rapports/. Ne touche JAMAIS marketing/tools/, lib/, functions/, les .json d'etat. Push refuse -> git pull --rebase origin usine puis reessaie, 5 fois.
           QCEOF
           claude -p "$(cat /tmp/qc_prompt.txt)" --model sonnet --dangerously-skip-permissions             && echo "OK QC Redacteur termine (evenementiel)"             || echo "::warning::QC Claude KO -> la routine de secours prendra le relais"
 

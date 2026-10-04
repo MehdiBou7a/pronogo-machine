@@ -84,7 +84,7 @@ jobs:
         with:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
-          ref: main
+          ref: usine
           fetch-depth: 5
 
       - name: Node 22 (même moteur que les Cloud Functions)
@@ -253,8 +253,8 @@ jobs:
           else
             git commit -m "journal-goalardo: relevé de $(date -u +%F) [routine]"
             for i in 1 2 3 4 5; do
-              if git push origin HEAD:main; then echo "Push OK (essai $i)."; break; fi
-              git pull --rebase --autostash origin main || git rebase --abort || true
+              if git push origin HEAD:usine; then echo "Push OK (essai $i)."; break; fi
+              git pull --rebase --autostash origin usine || git rebase --abort || true
               sleep $((i * 3))
             done
           fi

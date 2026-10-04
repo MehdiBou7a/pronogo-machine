@@ -49,7 +49,7 @@ jobs:
         with:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
-          ref: main
+          ref: usine
           fetch-depth: 50   # profondeur pour retrouver le commit QC « redacteur-en-chef »
 
       # ── DATE DU CYCLE (correctif fondateur 01/08) ────────────────────────
@@ -96,7 +96,7 @@ jobs:
           SINCE="$CYCLE_SINCE"
           echo "Attente d'un commit 'redacteur-en-chef' postérieur à $SINCE"
           for i in $(seq 1 20); do
-            git fetch -q origin main && git reset -q --hard origin/main
+            git fetch -q origin usine && git reset -q --hard origin/usine
             if [ -n "$(git log --since="$SINCE" --grep='redacteur-en-chef' --format=%h -1)" ]; then
               echo "✅ QC du Rédacteur trouvé (essai $i) — construction du menu."
               exit 0
@@ -176,8 +176,8 @@ jobs:
           if git diff --cached --quiet; then echo "JOUR/feedback inchangés."; exit 0; fi
           git commit -m "assemble(jour) + feedback $DATE [skip ci]"
           for i in 1 2 3; do
-            if git push origin HEAD:main; then echo "Push JOUR OK."; exit 0; fi
-            git pull --rebase --autostash -X theirs origin main || git rebase --abort || true; sleep $((i * 3))
+            if git push origin HEAD:usine; then echo "Push JOUR OK."; exit 0; fi
+            git pull --rebase --autostash -X theirs origin usine || git rebase --abort || true; sleep $((i * 3))
           done
           echo "::error::Push JOUR échoué — le menu du jour n'est pas publié. Rouge volontaire : un échec doit se voir." ; exit 1
 

@@ -25,7 +25,7 @@ jobs:
         with:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
-          ref: main
+          ref: usine
           fetch-depth: 1
 
       - name: Setup Python
@@ -66,8 +66,8 @@ jobs:
           git add marketing/content_machine/commentaires.json 2>/dev/null || true
           git commit -m "metrics(cloud) relevé réseaux $(date -u +%Y-%m-%d) [skip ci]"
           for i in 1 2 3 4 5; do
-            if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
-            git pull --rebase origin main; sleep $((i * 3))
+            if git push origin HEAD:usine; then echo "Push OK (essai $i)."; exit 0; fi
+            git pull --rebase origin usine; sleep $((i * 3))
           done
           echo "::warning::Push métriques échoué — append-only, le prochain run rattrape. Visible désormais."
 

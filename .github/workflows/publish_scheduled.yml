@@ -39,7 +39,7 @@ jobs:
         with:
           repository: MehdiBou7a/fc-pronox
           token: ${{ secrets.FCPRONOX_PAT }}
-          ref: main
+          ref: usine
           fetch-depth: 1
 
       - name: Filet — arrêt immédiat si PAUSE_AUTOPUBLISH présent
@@ -136,8 +136,8 @@ jobs:
           if git diff --cached --quiet; then echo "Rien à committer."; exit 0; fi
           git commit -m "state(cloud_publish) publications + refus + calendrier [skip ci]"
           for i in 1 2 3 4 5; do
-            if git push origin HEAD:main; then echo "Push OK (essai $i)."; exit 0; fi
-            git pull --rebase origin main; sleep $((i * 3))
+            if git push origin HEAD:usine; then echo "Push OK (essai $i)."; exit 0; fi
+            git pull --rebase origin usine; sleep $((i * 3))
           done
           echo "::error::Push de l'état de publication échoué — le prochain passage risque de REPUBLIER (doublon public). Rouge volontaire." ; exit 1
 
